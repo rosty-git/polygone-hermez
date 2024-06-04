@@ -1,0 +1,3747 @@
+openapi: 3.0.0
+info:
+  description: |
+    This Hermez node API is the layer that allows 3rd party apps and services to interface with the node to use the layer two features of the Hermez rollup.
+    Example of these apps are:
+    * Wallet: send L2 transactions, check balance, ...
+    * Explorer: List transactions, slots, batches, ...
+    * Exchange integrations
+
+    Note that some of the interactions with the rollup must be done using the Ethereum network directly.
+    Another way to integrate with the rollup is to [deploy a node](github.com/hermeznetwork/hermez-node/) and connect directly to its PostgreSQL database.
+    
+    ### Pagination
+    
+    #### Usage
+
+    All the endpoints that return a list of undefined size use pagination. Unless the opposite is explicitly said.
+    In order to use pagination, three query parameters are used:
+    * `fromItem`: indicates the first item to be returned. In general, this parameter shouldn't be provided in the first call to the endpoint, and use the `itemId` of the last returned item (+/-) 1, if the order is (ascending/descending).
+    * `order`: all paginated items are ordered chronologically. However, the specific fields to guarantee this order depend on each endpoint. For this purpose, `itemId` is used (itemId follows ascending chronological order except for unforged L1 user transactions). If the parameter is not provided, ascending order will be used by default. 
+    * `limit`: maximum amount of items to include in each response. Default is 20, maximum is 2049.
+    
+    Responses for those endpoints will always include a `pendingItems` property. This property includes the amount of items that are not fetched yet. This can be used to:
+    * Calculate the amount of items that match the filters: `totalItems = length(alreadyFetchedItems) + pendingItems`
+    * Know when all items have been fetched: `if pendingItems == 0 {/* all items have been fetched */}`
+
+    #### Reorgs and Safety
+
+    Since all the items are ordered chronologically, there are no safety problems when fetching items in ascending order, except for reorgs (more on this later).
+    On the other hand, when iterating in descending order, new items will be added at the beginning. This doesn't cause any safety problem, but to get those new items, it's necessary to start querying without the `fromItem` set to `pagination.lastItem`.
+    To handle reorgs, the `itemId` can be used since it will change. This is important since other identifiers may be the same but with different content. As an example, if batch 424 gets reorged, it will be deleted, but eventually, a new batch 424 will appear with potentially different content. However, these two batches number 424, will have different `itemId`.
+
+    ### Signatures
+
+    There are three endpoints that require signatures:
+    * POST /account-creation-authorization: signed using an Ethereum key.
+    * POST /transactions-pool: signed using BJJ key.
+    * PUT /transactions-pool: signed using BJJ key.
+
+    It's recommended to use the official SDKs for [Go](https://github.com/hermeznetwork/hermez-go-sdk), [JS](https://github.com/hermeznetwork/hermezjs) and [Flutter](https://github.com/hermeznetwork/hermez_flutter_sdk).
+    If for some reason the previous options doesn't suit your usecase, you can implement the signatures following the spec for [account creation authorizations](https://docs.hermez.io/#/developers/protocol/hermez-protocol/protocol?id=regular-rollup-account) and [L2 transactions](https://docs.hermez.io/#/developers/protocol/hermez-protocol/protocol?id=l2)
+
+    More details on how to sign will be provided soon.
+
+    ### Contact
+
+    If you have any doubt or suggestion, please contact us at:
+    * [GitHub](https://github.com/hermeznetwork/hermez-node/)
+    * [Telegram](https://t.me/hermez_network)
+    * [Discord](https://bit.ly/3nohULM)
+    * Email: hello@hermez.network 
+    * [Twitter](https://twitter.com/hermez_network)
+
+  version: "0.0.1"
+  title: Hermez Network API
+  license:
+    name: license AGPLv3
+    url: 'https://www.gnu.org/licenses/agpl-3.0.html'
+externalDocs:
+  description: Find out more about Hermez network.
+  url: 'https://hermez.io'
+servers:
+  - description: Hermez node on Rinkeby
+    url: https://api.testnet.hermez.io/v1
+  - description: Hermez node on Mainnet
+    url: https://api.hermez.io/v1
+  - description: Localhost, usefull for testing changes locally and required for unit tests
+    url: http://localhost:4010/v1
+tags:
+  - name: Coordinator
+    description: Endpoints used by the nodes running in coordinator mode. They are used to interact with the network.
+  - name: Explorer
+    description: Endpoints used by the nodes running in explorer mode. They are used to get information of the netwrok.
+paths:
+  '/account-creation-authorization':
+    post:
+      tags:
+        - Coordinator
+      summary: Send an authorization that will allow the coordinator to register accounts associated to an Ethereum address on behalf of the user.
+      description: >-
+        Send an authorization to create rollup accounts associated with an Ethereum address. Each account creation (an account can only hold a specific token) is effective once the coordinator forges the corresponding L1CoordinatorTx (which is always of type *account creation*).
+      operationId: postRegister
+      requestBody:
+        description: Account creation authorization.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccountCreationAuthorizationPost'
+      responses:
+        '200':
+          description: Successful operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountCreationAuthorizationPostSuccessResponse'
+        '400':
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error400'
+        '500':
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error500'
+  '/account-creation-authorization/{hezEthereumAddress}':
+    get:
+      tags:
+        - Coordinator
+      summary: Find out if the coordinator has the ability to create accounts associated with an Ethereum address.
+      description: >-
+        Returns the authorization to perform an account creation with the given Ethereum address on behalf of the Ethereum address holder.
+      operationId: getAccountCreationAuthorization
+      parameters:
+        - name: hezEthereumAddress
+          in: path
+          description: Ethereum address.
+          required: true
+          schema:
+            $ref: '#/components/schemas/HezEthereumAddress'
+      responses:
+        '200':
+          description: Successful operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountCreationAuthorization'
+        '400':
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error400'
+        '404':
+          description: Not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error404'
+        '500':
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error500'
+  '/accounts':
+    get:
+      tags:
+        - Explorer
+      summary: Get accounts balances and other associated information.
+      description: Get account balances and other associated information.
+      operationId: getAccounts
+      parameters:
+        - name: hezEthereumAddress
+          in: query
+          description: Only get accounts associated to an Ethereum address. Incompatible with the query `BJJ`.
+          required: false
+          schema:
+            $ref: '#/components/schemas/HezEthereumAddress'
+        - name: BJJ
+          in: query
+          description: Only get accounts associated to a BabyJubJub compressed public key.  Incompatible with the query `hezEthereumAddress`.
+          required: false
+          schema:
+            $ref: '#/components/schemas/BJJ'
+        - name: tokenIds
+          in: query
+          required: false
+          description: Only get accounts of specific tokens. This is represented by a comma separated list of token identifiers.
+          schema:
+            type: string
+            description: Comma separated list of token identifiers.
+            example: "3,87,91"
+        - name: fromItem
+          in: query
+          required: false
+          description: Indicates the desired first item (using the itemId property) to be included in the response.
+          schema:
+            type: number
+        - name: order
+          in: query
+          required: false
+          description: Order of the returned items. Accounts will be ordered by increasing account index.
+          schema:
+            type: string
+            default: ASC
+            enum:
+                - ASC
+                - DESC
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of items to be returned.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 2049
+      responses:
+        '200':
+          description: Successful operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Accounts'
+        '400':
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error400'
+        '500':
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error500'
+  '/accounts/{accountIndex}':
+    get:
+      tags:
+        - Explorer
+      summary: Get an account by its index.
+      description: Get an account by its index.
+      operationId: getAccount
+      parameters:
+        - name: accountIndex
+          in: path
+          description: Identifier of an account.
+          required: true
+          schema:
+            $ref: '#/components/schemas/AccountIndex'
+      responses:
+        '200':
+          description: Successful operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+        '400':
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error400'
+        '404':
+          description: Not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error404'
+        '500':
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error500'
+  '/exits':
+    get:
+      tags:
+        - Explorer
+      summary: Get exit information. This information is required to perform a withdraw.
+      description: Get exit information. This information is required to perform a withdraw.
+      operationId: getExits
+      parameters:
+        - name: tokenId
+          in: query
+          required: false
+          description: Only get exits of specific token
+          schema:
+            $ref: '#/components/schemas/TokenId'
+        - name: hezEthereumAddress
+          in: query
+          description: Get exits associated to an Ethereum address. Incompatible with query `BJJ` and `accountIndex`.
+          required: false
+          schema:
+            $ref: '#/components/schemas/HezEthereumAddress'
+        - name: BJJ
+          in: query
+          description: Get exits associated to a BabyJubJub compressed public key. Incompatible with query `hezEthereumAddress` and `accountIndex`.
+          required: false
+          schema:
+            $ref: '#/components/schemas/BJJ'
+        - name: accountIndex
+          in: query
+          description: Get exits associated to a specific account. Incompatible with queries `tokenId`, `hezEthereumAddress` and `BJJ`.
+          required: false
+          schema:
+            $ref: '#/components/schemas/AccountIndex'
+        - name: batchNum
+          in: query
+          description: Get exits from the exit tree of a specific batch.
+          required: false
+          schema:
+            $ref: '#/components/schemas/BatchNum'
+        - name: onlyPendingWithdraws
+          in: query
+          description: Get exits with pending withdrawals.
+          required: false
+          schema:
+            type: boolean
+        - name: fromItem
+          in: query
+          required: false
+          description: Indicates the desired first item (using the itemId property) to be included in the response.
+          schema:
+            type: number
+        - name: order
+          in: query
+          required: false
+          description: Order of the returned items. Exits will be ordered by increasing (batchNum, accountIndex).
+          schema:
+            type: string
+            default: ASC
+            enum:
+                - ASC
+                - DESC
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of items to be returned.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 2049
+      responses:
+        '200':
+          description: Successful operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Exits'
+        '400':
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error400'
+        '500':
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error500'
+  '/exits/{batchNum}/{accountIndex}':
+    get:
+      tags:
+        - Explorer
+      summary: Get specific exit information.
+      description: Get exit information form a specific exit tree and account. This information is required to perform a withdraw. Exits are identified with accounIndex and batchNum since every batch that has exits has a different exit tree.
+      operationId: getExit
+      parameters:
+        - name: batchNum
+          in: path
+          description: Batch of the exit tree.
+          required: true
+          schema:
+            $ref: '#/components/schemas/BatchNum'
+        - name: accountIndex
+          in: path
+          description: Account identifier.
+          required: true
+          schema:
+            $ref: '#/components/schemas/AccountIndex'
+      responses:
+        '200':
+          description: Successful operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Exit'
+        '400':
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error400'
+        '404':
+          description: Not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error404'
+        '500':
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error500'
+  '/atomic-pool':
+    post:
+      tags:
+        - Coordinator
+      summary: Add a collection of L2 transactions to the coordinator's pool.
+      description: >-
+        Send L2 transactions. The transactions will be stored in the transaction pool of the coordinator and eventually forged.
+        The main goal of sending transactions in groups is to use the atomic feature, where transactions are binded by the `request` fields,
+        and forced to be forged together. Transactions will be rejected unless all of them conform a single atomic group, in other words, they only
+        will be accepted if it's mandatory to forge all of them in a single batch.
+      operationId: postTx
+      requestBody:
+        description: Signed transactions.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PostPoolL2Transactions'
+      responses:
+        '200':
+          description: Successful operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransactionIds'
+        '400':
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error400'
+        '500':
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error500'
+  '/atomic-pool/{id}':
+    get:
+      tags:
+        - Coordinator
+      summary: Get details and status of transactions that conform an atomic group and are on the coordinators pool.
+      description: >-
+        Get transactions from the pool by its atomic group ID. This endpoint is specially useful for tracking the status of atomic transactions that may not be forged yet.
+        Only transactions from the pool will be returned.
+        Note that the transaction pool is different for each coordinator and therefore only a coordinator that has received a specific atomic group
+        will be able to provide information about that set of transactions.
+      operationId: getAtomicPool
+      parameters:
+        - name: id
+          in: path
+          description: Atomic group identifier.
+          required: true
+          schema:
+            $ref: '#/components/schemas/AtomicGroupID'
+      responses:
+        '200':
+          description: Successful operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AtomicGroup'
+        '400':
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error400'
+        '404':
+          description: Not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error404'
+        '500':
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error500'
+  
+  '/transactions-pool':
+    post:
+      tags:
+        - Coordinator
+      summary: Add an L2 transaction to the coordinator's pool.
+      description: >-
+        Send L2 transaction. The transaction will be stored in the transaction pool of the coordinator and eventually forged.
+      operationId: postTx
+      requestBody:
+        description: Signed transaction.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PostPoolL2Transaction'
+      responses:
+        '200':
+          description: Successful operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransactionId'
+        '400':
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error400'
+        '500':
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error500'
+    get:
+      tags:
+        - Coordinator
+      summary: Get transactions that are in the pool.
+      operationId: getPoolTxs
+      parameters:
+        - name: state
+          in: query
+          required: false
+          description: State of the transactions, e.g. "pend"
+          schema:
+            $ref: '#/components/schemas/PoolL2TransactionState'
+        - name: tokenId
+          in: query
+          required: false
+          description: Only get transactions of specific token
+          schema:
+            $ref: '#/components/schemas/TokenId'
+        - name: accountIndex
+          in: query
+          required: false
+          description: Only get transactions sent from and to a specific account. Incompatible with the queries `fromAccountIndex`, `toAccountIndex`, `hezEthereumAddress`, `fromHezEthereumAddress`, `toHezEthereumAddress`, `BJJ`, `toBJJ`, `fromBJJ`.
+          schema:
+            $ref: '#/components/schemas/AccountIndex'
+        - name: fromAccountIndex
+          in: query
+          required: false
+          description: Only get transactions sent from a specific account. Incompatible with the queries `accountIndex`, `hezEthereumAddress`, `fromHezEthereumAddress`, `toHezEthereumAddress`, `BJJ`, `toBJJ`, `fromBJJ`.
+          schema:
+            $ref: '#/components/schemas/AccountIndex'
+        - name: toAccountIndex
+          in: query
+          required: false
+          description: Only get transactions sent to a specific account. Incompatible with the queries `accountIndex`, `hezEthereumAddress`, `fromHezEthereumAddress`, `toHezEthereumAddress`, `BJJ`, `toBJJ`, `fromBJJ`.
+          schema:
+            $ref: '#/components/schemas/AccountIndex'
+        - name: type
+          in: query
+          required: false
+          description: Only get transactions of a specific type
+          schema:
+            $ref: '#/components/schemas/TransactionType'
+        - name: hezEthereumAddress
+          in: query
+          required: false
+          description: Only get transactions sent from or to an account associated with an Ethereum address. Incompatible with the queries `BJJ`, `fromBJJ`, `toBJJ` and `accountIndex`, `fromAccountIndex`, `toAccountIndex`, `toHezEthereumAddress`, `fromHezEthereumAddress`.
+          schema:
+            $ref: '#/components/schemas/HezEthereumAddress'
+        - name: fromHezEthereumAddress
+          in: query
+          required: false
+          description: Only get transactions sent from an account associated with an Ethereum address. Incompatible with the queries `BJJ`, `fromBJJ`, `toBJJ` and `accountIndex`, `fromAccountIndex`, `toAccountIndex`, `hezEthereumAddress`.
+          schema:
+            $ref: '#/components/schemas/HezEthereumAddress'
+        - name: toHezEthereumAddress
+          in: query
+          required: false
+          description: Only get transactions sent to an account associated with an Ethereum address. Incompatible with the queries `BJJ`, `fromBJJ`, `toBJJ` and `accountIndex`, `fromAccountIndex`, `toAccountIndex`, `hezEthereumAddress`.
+          schema:
+            $ref: '#/components/schemas/HezEthereumAddress'
+        - name: BJJ
+          in: query
+          description: Only get transactions associated with a BabyJubJub compressed public key. The BJJ is in base 64. Incompatible with the queries `hezEthereumAddress` and `accountIndex`.
+          required: false
+          schema:
+            $ref: '#/components/schemas/BJJ'
+        - name: fromBJJ
+          in: query
+          description: Only get transactions sent from a BabyJubJub compressed public key. Incompatible with the queries `hezEthereumAddress`, `fromHezEthereumAddress`, `toHezEthereumAddress` and `accountIndex`, `fromAccountIndex`, `toAccountIndex`, `BJJ`.
+          required: false
+          schema:
+            $ref: '#/components/schemas/BJJ'
+        - name: toBJJ
+          in: query
+          description: Only get transactions sent to a BabyJubJub compressed public key. Incompatible with the queries `hezEthereumAddress`, `fromHezEthereumAddress`, `toHezEthereumAddress` and `accountIndex`, `fromAccountIndex`, `toAccountIndex`, `BJJ`.
+          required: false
+          schema:
+            $ref: '#/components/schemas/BJJ'
+        - name: fromItem
+          in: query
+          required: false
+          description: Indicates the desired first item (using the itemId property) to be included in the response.
+          schema:
+            type: number
+        - name: order
+          in: query
+          required: false
+          description: Order of the returned items. Transactions will be ordered by item_id.
+          schema:
+            type: string
+            default: ASC
+            enum:
+              - ASC
+              - DESC
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of items to be returned.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 2049
+      responses:
+        '200':
+          description: Successful operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PoolL2Transactions'
+        '400':
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error400'
+        '404':
+          description: Not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error404'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error500'
+  '/transactions-pool/{id}':
+    put:
+      tags:
+        - Coordinator
+      summary: Update an L2 transaction in the coordinator's pool. Only regular transactions can be updated. Fields, that can be updated - toAccountIndex, toHezEthereumAddress, toBjj, maxNumBatch, signature, type
+      description: >-
+        Update L2 transaction
+      operationId: putTx
+      parameters:
+        - name: id
+          in: path
+          description: Transaction identifier.
+          required: true
+          schema:
+            $ref: '#/components/schemas/TransactionId'
+      requestBody:
+        description: Signed transaction
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PostPoolL2Transaction'
+      responses:
+        '200':
+          description: Successful operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransactionId'
+        '400':
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error400'
+        '500':
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error500'
+    get:
+      tags:
+        - Coordinator
+      summary: Get details and status of a transaction that is in the pool.
+      description: >-
+        Get transaction from the pool by its ID. This endpoint is specially useful for tracking the status of a transaction that may not be forged yet.
+        Only transactions from the pool will be returned.
+        There are other options to filter transactions using query string parameters. Please check for more details below.
+        Note that the transaction pool is different for each coordinator and therefore only a coordinator that has received a specific transaction
+        will be able to provide information about that transaction.
+      operationId: getPoolTx
+      parameters:
+        - name: id
+          in: path
+          description: Transaction identifier.
+          required: true
+          schema:
+            $ref: '#/components/schemas/TransactionId'
+      responses:
+        '200':
+          description: Successful operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PoolL2Transaction'
+        '400':
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error400'
+        '404':
+          description: Not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error404'
+        '500':
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error500'
+  '/transactions-pool/accounts/{idx}/nonces/{nonce}':
+    put:
+      tags:
+        - Coordinator
+      summary: Update transaction by from account idx and nonce.
+      description: >-
+        Updates regular transactions by account idx and nonce. This endpoint is useful, when user want to update fee or amount, that was sent in the transaction,
+        but user can't use regular update transaction request, bcs transaction id is also changing. Delete previous transaction and inserts new one
+      operationId: updateTxByIdxAndNonce
+      parameters:
+        - name: idx
+          in: path
+          description: From account idx
+          required: true
+          schema:
+            $ref: '#/components/schemas/AccountIndex'
+        - name: nonce
+          in: path
+          description: trasnaction nonce
+          required: true
+          schema:
+            $ref: '#/components/schemas/Nonce'
+      requestBody:
+        description: Signed transaction
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PostPoolL2Transaction'
+      responses:
+        '200':
+          description: Successful operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransactionId'
+        '400':
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error400'
+        '500':
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error500'
+  '/transactions-history':
+    get:
+      tags:
+        - Explorer
+      summary: Get details and status of transactions that have been forged.
+      description: >-
+        Get historical transactions. This endpoint will return all the different types of **forged** transactions, this means that:
+          * Transactions that are still in the transaction pool of any coordinator are not included. These transactions can be fetched using `GET /transactions-pool/{id}`.
+          * L1 transactions sent by users that have not been forged yet are not included. These transactions can be fetched using `GET /transactions-history/{id}`.
+      operationId: getHistoryTxs
+      parameters:
+        - name: tokenId
+          in: query
+          required: false
+          description: Only get transactions of specific token
+          schema:
+            $ref: '#/components/schemas/TokenId'
+        - name: hezEthereumAddress
+          in: query
+          required: false
+          description: Only get transactions sent from or to an account associated with an Ethereum address. Incompatible with the queries `BJJ`, `fromBJJ`, `toBJJ` and `accountIndex`, `fromAccountIndex`, `toAccountIndex`, `toHezEthereumAddress`, `fromHezEthereumAddress`.
+          schema:
+            $ref: '#/components/schemas/HezEthereumAddress'
+        - name: fromHezEthereumAddress
+          in: query
+          required: false
+          description: Only get transactions sent from an account associated with an Ethereum address. Incompatible with the queries `BJJ`, `fromBJJ`, `toBJJ` and `accountIndex`, `fromAccountIndex`, `toAccountIndex`, `hezEthereumAddress`.
+          schema:
+            $ref: '#/components/schemas/HezEthereumAddress'
+        - name: toHezEthereumAddress
+          in: query
+          required: false
+          description: Only get transactions sent to an account associated with an Ethereum address. Incompatible with the queries `BJJ`, `fromBJJ`, `toBJJ` and `accountIndex`, `fromAccountIndex`, `toAccountIndex`, `hezEthereumAddress`.
+          schema:
+            $ref: '#/components/schemas/HezEthereumAddress'
+        - name: BJJ
+          in: query
+          description: Only get transactions associated with a BabyJubJub compressed public key. Incompatible with the queries `hezEthereumAddress` and `accountIndex`.
+          required: false
+          schema:
+            $ref: '#/components/schemas/BJJ'
+        - name: fromBJJ
+          in: query
+          description: Only get transactions from a BabyJubJub compressed public key. Incompatible with the queries `hezEthereumAddress`, `fromHezEthereumAddress`, `toHezEthereumAddress` and `accountIndex`, `fromAccountIndex`, `toAccountIndex`, `BJJ`.
+          required: false
+          schema:
+            $ref: '#/components/schemas/BJJ'
+        - name: toBJJ
+          in: query
+          description: Only get transactions to a BabyJubJub compressed public key. Incompatible with the queries `hezEthereumAddress`, `fromHezEthereumAddress`, `toHezEthereumAddress` and `accountIndex`, `fromAccountIndex`, `toAccountIndex`, `BJJ`.
+          required: false
+          schema:
+            $ref: '#/components/schemas/BJJ'
+        - name: accountIndex
+          in: query
+          required: false
+          description: Only get transactions sent from and to a specific account. Incompatible with the queries `tokenId`, `fromAccountIndex`, `toAccountIndex`, `hezEthereumAddress`, `fromHezEthereumAddress`, `toHezEthereumAddress`, `BJJ`, `toBJJ`, `fromBJJ`.
+          schema:
+            $ref: '#/components/schemas/AccountIndex'
+        - name: fromAccountIndex
+          in: query
+          required: false
+          description: Only get transactions sent from a specific account. Incompatible with the queries `tokenId`, `accountIndex`, `hezEthereumAddress`, `fromHezEthereumAddress`, `toHezEthereumAddress`, `BJJ`, `toBJJ`, `fromBJJ`.
+          schema:
+            $ref: '#/components/schemas/AccountIndex'
+        - name: toAccountIndex
+          in: query
+          required: false
+          description: Only get transactions sent to a specific account. Incompatible with the queries `tokenId`, `accountIndex`, `hezEthereumAddress`, `fromHezEthereumAddress`, `toHezEthereumAddress`, `BJJ`, `toBJJ`, `fromBJJ`.
+          schema:
+            $ref: '#/components/schemas/AccountIndex'
+        - name: batchNum
+          in: query
+          required: false
+          description: Only get transactions forged in a specific batch.
+          schema:
+            $ref: '#/components/schemas/BatchNum'
+        - name: type
+          in: query
+          required: false
+          description: Only get transactions of a specific type.
+          schema:
+            $ref: '#/components/schemas/TransactionType'
+        - name: fromItem
+          in: query
+          required: false
+          description: Indicates the desired first item (using the itemId property) to be included in the response.
+          schema:
+            type: number
+        - name: order
+          in: query
+          required: false
+          description: Order of the returned items. History transactions will be ordered by (batchNum, position).
+          schema:
+            type: string
+            default: ASC
+            enum:
+                - ASC
+                - DESC
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of items to be returned.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 2049
+        - name: includePendingL1s
+          in: query
+          required: false
+          description: |
+            If set to true L1 transactions that have been added to the smart contract queue but haven't been forged yet are returned.
+            Warning: the correctness of the order is not guaranteed when using this filter, as the unforged transactions may change their position
+            once they are forged. 
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Successful operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HistoryTransactions'
+        '400':
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error400'
+        '500':
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error500'
+  '/transactions-history/{id}':
+    get:
+      tags:
+        - Explorer
+      summary: Get details and status of a specific historical transaction.
+      description: >-
+        Get transaction by its ID. There are other options to filter transactions using query string parameters. Please check for more details below.
+        This endpoint will return all the different types of transactions except those that are still in the pool of any coordinator.
+      operationId: getHistoryTx
+      parameters:
+        - name: id
+          in: path
+          description: Transaction identifier.
+          required: true
+          schema:
+            $ref: '#/components/schemas/TransactionId'
+      responses:
+        '200':
+          description: Successful operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HistoryTransaction'
+        '400':
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error400'
+        '404':
+          description: Not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error404'
+        '500':
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error500'
+  '/batches':
+    get:
+      tags:
+        - Explorer
+      summary: Get information about forged batches.
+      description: >-
+        Get information about forged batches.
+      operationId: getBatches
+      parameters:
+        - name: minBatchNum
+          in: query
+          required: false
+          description: Include only `batchNum > minBatchNum` batches.
+          schema:
+            $ref: '#/components/schemas/BatchNum'
+        - name: maxBatchNum
+          in: query
+          required: false
+          description: Include only `batchNum < maxBatchNum` batches.
+          schema:
+            type: number
+        - name: slotNum
+          in: query
+          required: false
+          description: Include only batches that were forged within the specified slot.
+          schema:
+            $ref: '#/components/schemas/SlotNum'
+        - name: forgerAddr
+          in: query
+          required: false
+          description: Include only batches forged by `forgerAddr`
+          schema:
+            $ref: '#/components/schemas/EthereumAddress'
+        - name: fromItem
+          in: query
+          required: false
+          description: Indicates the desired first item (using the itemId property) to be included in the response.
+          schema:
+            type: number
+        - name: order
+          in: query
+          required: false
+          description: Order of the returned items. Batches will be ordered by increasing `batchNum`.
+          schema:
+            type: string
+            default: ASC
+            enum:
+                - ASC
+                - DESC
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of items to be returned.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 2049
+      responses:
+        '200':
+          description: Successful operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Batches'
+        '400':
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error400'
+        '500':
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error500'                
+  '/batches/{batchNum}':
+    get:
+      tags:
+        - Explorer
+      summary: Get a specific batch.
+      description: >-
+        Get a specific batch.
+      operationId: getBatch
+      parameters:
+        - name: batchNum
+          in: path
+          description: Batch identifier.
+          required: true
+          schema:
+            $ref: '#/components/schemas/BatchNum'
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Batch'
+        '400':
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error400'
+        '404':
+          description: Not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error404'
+        '500':
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error500'
+  '/full-batches/{batchNum}':
+    get:
+      tags:
+        - Explorer
+      summary: Get a full batch.
+      description: >-
+        Get a specific batch, including the associated transactions. The object returned in this method can be a bit heavy. 
+        If you're devloping a front end, you may consider using a combinaton of `GET /batches/{batchnum}` and `GET /history-transactions?batchNum={batchNum}`.
+      operationId: getFullBatch
+      parameters:
+        - name: batchNum
+          in: path
+          description: Batch identifier
+          required: true
+          schema:
+            $ref: '#/components/schemas/BatchNum'
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FullBatch'
+        '400':
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error400'
+        '404':
+          description: Not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error404'
+        '500':
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error500'
+  '/slots':
+    get:
+      tags:
+        - Explorer
+      summary: Get information about slots.
+      description: >-
+        Get information about slots.
+      operationId: getSlots
+      parameters:
+        - name: minSlotNum
+          in: query
+          required: false
+          description: Only include slots with `slotNum >= minSlotNum`. By default, `minSlotNum = 0`.
+          schema:
+            $ref: '#/components/schemas/SlotNum'
+        - name: maxSlotNum
+          in: query
+          required: false
+          description: Only include slots with `slotNum <= maxSlotNum`.
+          schema:
+            $ref: '#/components/schemas/SlotNum'
+        - name: wonByEthereumAddress
+          in: query
+          required: false
+          description: Only include slots won by a coordinator whose `bidderAddr == wonByEthereumAddress`.
+          schema:
+            $ref: '#/components/schemas/EthereumAddress'
+        - name: finishedAuction
+          in: query
+          required: false
+          description: If set to true, only include slots whose auction has finished.
+          schema:
+            type: boolean
+        - name: fromItem
+          in: query
+          required: false
+          description: Indicates the desired first item (using the itemId property) to be included in the response.
+          schema:
+            type: number
+        - name: order
+          in: query
+          required: false
+          description: Order of the returned items. Slots will be ordered by increasing `slotNum`.
+          schema:
+            type: string
+            default: ASC
+            enum:
+                - ASC
+                - DESC
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of items to be returned.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 2049
+      responses:
+        '200':
+          description: Successful operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Slots'
+        '400':
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error400'
+        '500':
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error500'
+  '/slots/{slotNum}':
+    get:
+      tags:
+        - Explorer
+      summary: Get information about a specific slot.
+      description: >-
+        Get information about a specific slot.
+      operationId: getSlot
+      parameters:
+        - name: slotNum
+          in: path
+          required: true
+          description: Identifier of the slot.
+          schema:
+            $ref: '#/components/schemas/SlotNum'
+      responses:
+        '200':
+          description: Successful operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Slot'
+        '400':
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error400'
+        '404':
+          description: Not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error404'
+        '500':
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error500'
+  '/bids':
+    get:
+      tags:
+        - Explorer
+      summary: Get a list of bids.
+      description: >- 
+        Get a list of bids. It's necessary to provide at least one of the following filters: `slotNum`, `bidderAddr`.
+      operationId: getSlotBids
+      parameters:
+        - name: slotNum
+          in: query
+          description: Slot identifier. Specify the auction where the returned bids were made.
+          required: false
+          schema:
+            $ref: '#/components/schemas/SlotNum'
+        - name: bidderAddr
+          in: query
+          description: Get only bids made by a coordinator identified by its bidder address. In this case, the bids will be returned in the order that the coordinator made them.
+          required: false
+          schema:
+            $ref: '#/components/schemas/EthereumAddress'
+        - name: fromItem
+          in: query
+          required: false
+          description: Indicates the desired first item (using the itemId property) to be included in the response.
+          schema:
+            type: number
+        - name: order
+          in: query
+          required: false
+          description: Order of the returned items. Bids will be ordered by increasing (slotNum, bidValue)`.
+          schema:
+            type: string
+            default: ASC
+            enum:
+                - ASC
+                - DESC
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of items to be returned.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 2049
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Bids'
+        '400':
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error400'
+        '500':
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error500'
+  '/state':
+    get:
+      tags:
+        - Explorer
+      summary: Return information that represents the current state of the network.
+      description: Return information that represents the current state of the network. It also includes metrics and statistics.
+      operationId: getState
+      responses:
+        '200':
+          description: Successful operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/State'
+        '400':
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error400'
+        '500':
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error500'
+  '/config':
+    get:
+      tags:
+        - Explorer
+      summary: Return constant configuration of the network.
+      description: Return constant configuration of the network.
+      operationId: getConfig
+      responses:
+        '200':
+          description: Successful operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Config'
+        '500':
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error500'
+  '/health':
+    get:
+      tags:
+        - Explorer
+      summary: Return health status of the hermez node.
+      description: Return health status of the hermez node.
+      operationId: getHealth
+      responses:
+        '200':
+          description: Successful operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+        '503':
+          description: Service unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error503'
+  '/tokens':
+    get:
+      tags:
+        - Explorer
+      summary: Get information of the supported tokens in the Hermez Network.
+      description: Get information of the supported tokens in the Hermez Network.
+      operationId: getTokens
+      parameters:
+        - name: ids
+          in: query
+          required: false
+          description: Include only specific tokens by their Hermez identifiers.
+          schema:
+            type: string
+            description: Pipeline "|" separated list of token identifiers
+            example: "2|44|689"
+        - name: symbols
+          in: query
+          required: false
+          description: Include only specific tokens by their symbols.
+          schema:
+            type: string
+            description: Pipeline "|" separated list of token symbols.
+            example: "DAI|NEC|UMA"
+        - name: name
+          in: query
+          required: false
+          description: Include token(s) by their names (or a substring of the name).
+          schema:
+            type: string
+        - name: addresses
+          in: query
+          required: false
+          description: Include only specific tokens by their SC addresses.
+          schema:
+            type: string
+            description: Pipeline "|" separated list of token identifiers
+            example: "0xdac17f959d2ee523a2206207994597c13d831ec8|0xdac17f958e2ee523a2207206994597c12d831ec7|0xfac17f058d2ee527a2206206994597d13d831ec7"
+        - name: fromItem
+          in: query
+          required: false
+          description: Indicates the desired first item (using the itemId property) to be included in the response.
+          schema:
+            type: number
+        - name: order
+          in: query
+          required: false
+          description: Order of the returned items. Tokens will be ordered by increasing tokenID.
+          schema:
+            type: string
+            default: ASC
+            enum:
+                - ASC
+                - DESC
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of items to be returned.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 2049
+      responses:
+        '200':
+          description: Successful operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tokens'
+        '400':
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error400'
+        '500':
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error500'
+  '/tokens/{id}':
+    get:
+      tags:
+        - Explorer
+      summary: Get information of a token supported by Hermez Network.
+      description: Get information of a token supported by Hermez Network.
+      operationId: getToken
+      parameters:
+        - name: id
+          in: path
+          description: Token identifier
+          required: true
+          schema:
+            $ref: '#/components/schemas/TokenId'
+      responses:
+        '200':
+          description: Successful operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Token'
+        '400':
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error400'
+        '404':
+          description: Not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error404'
+        '500':
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error500'
+  '/coordinators':
+    get:
+      tags:
+        - Explorer
+      summary: Get information about coordinators.
+      description: Get information about coordinators.
+      operationId: getCoordinators
+      parameters:
+        - name: forgerAddr
+          in: query
+          required: false
+          description: Get coordinators by it's forger address.
+          schema:
+            $ref: '#/components/schemas/EthereumAddress'
+        - name: bidderAddr
+          in: query
+          required: false
+          description: Get coordinators by it's bidder address.
+          schema:
+            $ref: '#/components/schemas/EthereumAddress'
+        - name: fromItem
+          in: query
+          required: false
+          description: Indicates the desired first item (using the itemId property) to be included in the response.
+          schema:
+            type: number
+        - name: order
+          in: query
+          required: false
+          description: Order of the returned items. Coordinators will be ordered by increasing (ethereumBlock, forgerAddr).
+          schema:
+            type: string
+            default: ASC
+            enum:
+                - ASC
+                - DESC
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of items to be returned.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 2049
+      responses:
+        '200':
+          description: Successful operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Coordinators'
+        '400':
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error400'
+        '500':
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error500'
+components:
+  schemas:
+    ItemId:
+      type: integer
+      description: Position of the item in the DB. This is useful for pagination, but has  nothing to do with the protocol.
+    PostPoolL2Transaction:
+      type: object
+      description: L2 transaction to be posted.
+      properties:
+        id:
+          $ref: '#/components/schemas/TransactionId'
+        type:
+          $ref: '#/components/schemas/TransactionTypeL2'
+        tokenId:
+          $ref: '#/components/schemas/TokenId'
+        fromAccountIndex:
+          $ref: '#/components/schemas/AccountIndex'
+        toAccountIndex:
+          type: string
+          description: >-
+            Identifier of the destination account. It references the position where the account is inside the state Merkle tree.
+            The identifier is built using: `hez:` + `token symbol:` + `index`. If this is provided, toHezEthereumAddress and toBjj
+            must be null. To perform an exit the value hez:EXIT:1 must be used.
+          example: null
+          nullable: true
+        toHezEthereumAddress:
+          type: string
+          description: "Address of an Ethereum account linked to the Hermez Network. If this is provided, toAccountIndex and toBjj must be null."
+          pattern: "^hez:0x[a-fA-F0-9]{40}$"
+          example: "hez:0xaa942cfcd25ad4d90a62358b0dd84f33b398262a"
+          nullable: true
+        toBjj:
+          type: string
+          description: >-
+            BabyJubJub compressed public key, encoded as base64 URL (RFC 4648), which result in 33 bytes. The padding byte is replaced by a sum of the encoded bytes.
+            If this is provided, toAccountIndex must be null and toHezEthereumAddress must be hez:0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF.
+          pattern: "^hez:[A-Za-z0-9_-]{44}$"
+          example: null
+          nullable: true
+        amount:
+          allOf:
+            - $ref: '#/components/schemas/BigInt'
+            - description: Amount of tokens to be sent.
+              example: "6300000000000000000"
+        fee:
+          $ref: '#/components/schemas/FeeSelector'
+        nonce:
+          $ref: '#/components/schemas/Nonce'
+        signature:
+          allOf:
+            - $ref: '#/components/schemas/BJJSignature'
+            - description: Signature of the transaction. More info [here](https://docs.hermez.io/#/developers/protocol/hermez-protocol/protocol?id=l2).
+            - example: "72024a43f546b0e1d9d5d7c4c30c259102a9726363adcc4ec7b6aea686bcb5116f485c5542d27c4092ae0ceaf38e3bb44417639bd2070a58ba1aa1aab9d92c03"
+        maxNumBatch:
+          type: integer
+          description: Batch until the transaction can be forged. If the transaction isn't forged before batch `maxNumBatch`, it will never be forged. 0 means no restriction.
+          example: 0  
+        requestOffset:
+          type: integer
+          description: |
+            Identifier of the relative index of the transaction that would be linked. 0 means no linked transaction.
+            More info on how the identifiers are built [here](https://docs.hermez.io/#/developers/protocol/hermez-protocol/circuits/circuits?id=rq-tx-verifier)
+          example: 0
+          nullable: true
+      example:
+        id: '0x020000000001000000000006'
+        type: Transfer
+        tokenId: 6
+        fromAccountIndex: hez:DAI:256
+        toAccountIndex: hez:DAI:257
+        toHezEthereumAddress: 
+        toBjj: 
+        amount: '100000000000000'
+        fee: 0
+        nonce: 6
+        signature: 1a79dd5e661d58266901a0de8afb046b466c4c1af937100f627a421771f2911fa3fde8ea2e272b4802a8b1f1229689292acd6f7e8ab4cadc4ab37b6b9e13a101
+        maxNumBatch: 0
+        requestOffset: 0
+      additionalProperties: false
+      required:
+      - id
+      - type
+      - tokenId
+      - fromAccountIndex
+      - amount
+      - fee
+      - nonce
+      - signature
+    AtomicGroupID:
+      type: string
+      description: |
+        Identifier for atomic groups (set of transactions that have to be forged in the same batch, constrained by the request fields of the transactions on the group).
+        This identifier is calculated by hashing the concatenation of the transaction id bytes that conform the group).
+      example:  '0x02b0c3d2fe18df3cd192d862804641190f99b79df3f1d6449b65fe246412120af0'
+    PostPoolL2Transactions:
+      type: object
+      properties:
+        atomicGroupId:
+          $ref: '#/components/schemas/AtomicGroupID'
+        transactions:
+          type: array
+          items:
+            $ref: '#/components/schemas/PostPoolL2Transaction'
+      required:
+        - atomicGroupId
+        - transactions
+      additionalProperties: false
+      example:
+        atomicGroupId: '0x0cd3d5c747145f70055156c565446441b60b8ca0dd7c8ddbb913529ed39773a7'
+        transactions:
+        - id: '0x02d4cbab2c32a7afb59c923cbf54a5f82d6ea1b1c553599a8a301c7109ea1eff17'
+          type: Transfer
+          tokenId: 0
+          fromAccountIndex: hez:ETH:5000
+          toAccountIndex: hez:ETH:5001
+          toHezEthereumAddress:
+          toBjj:
+          amount: '10000000000'
+          fee: 200
+          nonce: 0
+          maxNumBatch: 0
+          signature: dd4c93adedd4ee678819c89f45150fa098265d38a81042d72d5d8040ce64a500b40f2f7acb190620eb537bd22ec26310b660b76bba0697276173e2331e62b204
+          requestOffset: 1
+        - id: '0x0200d87a0e641fb84bb76a013cc3db1b423203f7dfc3f07afdbe3e7b78b6a527de'
+          type: Transfer
+          tokenId: 0
+          fromAccountIndex: hez:ETH:5001
+          toAccountIndex: hez:ETH:5002
+          toHezEthereumAddress:
+          toBjj:
+          amount: '10000000000'
+          fee: 200
+          nonce: 0
+          maxNumBatch: 0
+          signature: f20a2b83227e10b5e46b215c3b27f2bf1b39fb05ce3bb70bb1504ca9e700e49a99b023e15ddfbdc262be3996dbea255445c850f366f954ee352b665c0b648403
+          requestOffset: 1
+        - id: '0x0219ffcb5d99b25614ca81f94fd3947095b07aaf5bf4ba7d1078aa85d06c8a0fc2'
+          type: Transfer
+          tokenId: 0
+          fromAccountIndex: hez:ETH:5002
+          toAccountIndex: hez:ETH:5003
+          toHezEthereumAddress:
+          toBjj:
+          amount: '10000000000'
+          fee: 200
+          nonce: 0
+          maxNumBatch: 0
+          signature: d39134d192a63d0529d0575b5d7c0e1f3e9115c53186194b27e1c29c701442848206ee52e8b477a9804fb5cbff91f5e99ee04e4f1e22909bb6962df8464c0900
+          requestOffset: 1
+        - id: '0x02814c29cf2bbdaa024920fdd71c6d976a0bed2de6d91c61c38daee74bf6a08cba'
+          type: Transfer
+          tokenId: 0
+          fromAccountIndex: hez:ETH:5003
+          toAccountIndex: hez:ETH:5000
+          toHezEthereumAddress:
+          toBjj:
+          amount: '10000000000'
+          fee: 200
+          nonce: 0
+          maxNumBatch: 0
+          signature: 7b9e3e4e8148ccf22532148576118f1212ba2a9ed8ee50022d65bb5c2af5df0307894e739af9fdbc2ebb8a1accd2396144a4937c735bc38658fcf6a1caf4eb03
+          requestOffset: 5
+
+    PoolL2Transaction:
+      type: object
+      properties:
+        id:
+          $ref: '#/components/schemas/TransactionId'
+        itemId:
+          $ref: '#/components/schemas/ItemId'
+        type:
+          $ref: '#/components/schemas/TransactionTypeL2'
+        fromAccountIndex:
+          $ref: '#/components/schemas/AccountIndex'
+        fromHezEthereumAddress:
+          type: string
+          description: "Address of an Ethereum account linked to the Hermez Network."
+          pattern: "^hez:0x[a-fA-F0-9]{40}$"
+          example: "hez:0xaa942cfcd25ad4d90a62358b0dd84f33b398262a"
+          nullable: true
+        fromBJJ:
+          type: string
+          description: "BabyJubJub compressed public key, encoded as base64 URL (RFC 4648), which result in 33 bytes. The padding byte is replaced by a sum of the encoded bytes."
+          pattern: "^hez:[A-Za-z0-9_-]{44}$"
+          example: "hez:9CK9fjQdMUTGm8KDvGLy3MB-vnP0NCcGX7Uh7OO6KRJm"
+          nullable: true
+        toAccountIndex:
+          type: string
+          description: >-
+            Identifier of the destination account. It references the position where the account is inside the state Merkle tree.
+            The identifier is built using: `hez:` + `token symbol:` + `index`
+          example: "hez:DAI:309"
+          nullable: true
+        toHezEthereumAddress:
+          type: string
+          description: "Address of an Ethereum account linked to the Hermez Network."
+          pattern: "^hez:0x[a-fA-F0-9]{40}$"
+          example: null
+          nullable: true
+        toBJJ:
+          type: string
+          description: "BabyJubJub compressed public key, encoded as base64 URL (RFC 4648), which result in 33 bytes. The padding byte is replaced by a sum of the encoded bytes."
+          pattern: "^hez:[A-Za-z0-9_-]{44}$"
+          example: null
+          nullable: true
+        amount:
+          allOf:
+            - $ref: '#/components/schemas/BigInt'
+            - description: Amount of tokens to be sent.
+              example: "6303020000000000000"
+        fee:
+          $ref: '#/components/schemas/FeeSelector'
+        nonce:
+          $ref: '#/components/schemas/Nonce'
+        state:
+          $ref: '#/components/schemas/PoolL2TransactionState'
+        batchNum:
+          type: integer
+          description: Batch num for transaction.
+          example: 0
+          nullable: true
+        maxNumBatch:
+          type: integer
+          description: Batch until the transaction can be forged. If the transaction isn't forged before batch `maxNumBatch`, it will never be forged. 0 means no restriction.
+          example: 0 
+        info:
+          type: string
+          description: "Info contains information about the status & State of the transaction. As for example, if the Tx has not been selected in the last batch due not enough Balance at the Sender account, this reason would appear at this parameter."
+          pattern: ".*"
+          example: "Tx not selected due not enough Balance at the sender."
+          nullable: true
+        signature:
+          allOf:
+            - $ref: '#/components/schemas/BJJSignature'
+            - description: Signature of the transaction. More info [here](https://docs.hermez.io/#/developers/protocol/hermez-protocol/protocol?id=l2).
+            - example: "72024a43f546b0e1d9d5d7c4c30c259102a9726363adcc4ec7b6aea686bcb5116f485c5542d27c4092ae0ceaf38e3bb44417639bd2070a58ba1aa1aab9d92c03"
+        errorType:
+          type: string
+          nullable: true
+        errorCode:
+          type: integer
+          nullable: true
+        timestamp:
+          type: string
+          description: Moment in which the transaction was added to the pool.
+          format: date-time
+        requestFromAccountIndex:
+          type: string
+          description: >-
+            Identifier of an account. It references the position where the account is inside the state Merkle tree.
+            The identifier is built using: `hez:` + `token symbol:` + `index`
+          nullable: true
+          example: null
+        requestToAccountIndex:
+          type: string
+          description: >-
+            Identifier of an account. It references the position where the account is inside the state Merkle tree.
+            The identifier is built using: `hez:` + `token symbol:` + `index`
+          nullable: true
+          example: null
+        requestToHezEthereumAddress:
+          type: string
+          description: "Address of an Ethereum account linked to the Hermez Network."
+          pattern: "^hez:0x[a-fA-F0-9]{40}$"
+          nullable: true
+          example: null
+        requestToBJJ:
+          type: string
+          description: "BabyJubJub compressed public key, encoded as base64 URL (RFC 4648), which result in 33 bytes. The padding byte is replaced by a sum of the encoded bytes."
+          pattern: "^hez:[A-Za-z0-9_-]{44}$"
+          nullable: true
+          example: null
+        requestTokenId:
+          type: integer
+          description: References the `tokenId` of the requested transaction.
+          example: null
+          nullable: true
+        requestAmount:
+          type: string
+          description: BigInt is an integer encoded as a string for numbers that are very large.
+          nullable: true
+          example: null
+        requestFee:
+          type: integer
+          description: Index of the fee type to select, more info [here](https://docs.hermez.io/#/developers/protocol/hermez-protocol/protocol?id=user).
+          minimum: 0
+          maximum: 256
+          nullable: true
+          example: null
+        requestNonce:
+          type: integer
+          description: Number that can only be used once per account. Increments by one with each transaction.
+          minimum: 0
+          maximum: 1.84467440737096e+19
+          nullable: true
+          example: null
+        token:
+          $ref: '#/components/schemas/Token'
+      example:
+        amount: '100000000000000'
+        fee: 0
+        fromAccountIndex: hez:SCC:256
+        fromBJJ: hez:r_trOasVEk0zNaalOoS9aLedu6mO7jI5XTIPu_zGXoyn
+        fromHezEthereumAddress: hez:0x00000000000000000000000000000000004Ab84F
+        id: '0x020000000001000000000006'
+        nonce: 6
+        requestAmount: 
+        requestFee: 0
+        requestFromAccountIndex: 
+        requestNonce: 0
+        requestToAccountIndex: 
+        requestToBJJ: 
+        requestToHezEthereumAddress: 
+        requestTokenId: 
+        signature: 5ee9c7b5baa243ba282d18596a55cc357b01513eaed75165365f802102cce4a7a1dd35e3ab31cf9039e2b8a9f570d935115be9379a3dd47813dfc014031ab201
+        state: pend
+        timestamp: '2020-11-17T13:58:54.422232Z'
+        toAccountIndex: hez:SCC:257
+        toBJJ: hez:r_trOasVEk0zNaalOoS9aLedu6mO7jI5XTIPu_zGXoyn
+        toHezEthereumAddress: hez:0x00000000000000000000000000000000004Ab84F
+        maxNumBatch: 0
+        token:
+          USD: 23.74
+          decimals: 7
+          ethereumAddress: '0x0000000000000000000000000000000000000006'
+          ethereumBlockNum: 2
+          fiatUpdate: 
+          id: 6
+          itemId: 7
+          name: Some Cool Coin
+          symbol: 'SCC'
+        type: Transfer
+      required:
+        - id
+        - type
+        - fromAccountIndex
+        - fromHezEthereumAddress
+        - fromBJJ
+        - toAccountIndex
+        - toHezEthereumAddress
+        - toBJJ
+        - amount
+        - fee
+        - nonce
+        - state
+        - info
+        - signature
+        - timestamp
+        - requestFromAccountIndex
+        - requestToAccountIndex
+        - requestToHezEthereumAddress
+        - requestToBJJ
+        - requestTokenId
+        - requestAmount
+        - requestFee
+        - requestNonce
+        - token
+      additionalProperties: false
+    PoolL2Transactions:
+      type: object
+      properties:
+        transactions:
+          type: array
+          description: List of pool l2 transactions
+          items:
+            $ref: '#/components/schemas/PoolL2Transaction'
+        pendingItems:
+          $ref: '#/components/schemas/PendingItems'
+      required:
+        - transactions
+        - pendingItems
+      additionalProperties: false
+    AtomicGroup:
+      type: array
+      items:
+        $ref: '#/components/schemas/PoolL2Transaction'
+    TransactionId:
+      type: string
+      description: Identifier for transactions. Used for any kind of transaction (both L1 and L2). More info on how the identifiers are built [here](https://docs.hermez.io/#/developers/dev-guide?id=transaction-id)
+      example: "0x00000000000001e240004700" 
+    TransactionIds:
+      type: array
+      items:
+          $ref: '#/components/schemas/TransactionId'
+    EthereumAddress:
+      type: string
+      description: "Address of an Ethereum account."
+      pattern: "^0x[a-fA-F0-9]{40}$"
+      example: "0xaa942cfcd25ad4d90a62358b0dd84f33b398262a" 
+    HezEthereumAddress:
+      type: string
+      description: "Address of an Ethereum account linked to the Hermez Network."
+      pattern: "^hez:0x[a-fA-F0-9]{40}$"
+      example: "hez:0xaa942cfcd25ad4d90a62358b0dd84f33b398262a" 
+    BJJ:
+      type: string
+      description: "BabyJubJub compressed public key, encoded as base64 URL (RFC 4648), which result in 33 bytes. The padding byte is replaced by a sum of the encoded bytes."
+      pattern: "^hez:[A-Za-z0-9_-]{44}$"
+      example: "hez:rR7LXKal-av7I56Y0dEBCVmwc9zpoLY5ERhy5w7G-xwe"
+    AccountIndex:
+      type: string
+      description: >-
+        Identifier of an account. It references the position where the account is inside the state Merkle tree.
+        The identifier is built using: `hez:` + `token symbol:` + `index`
+      example: "hez:DAI:4444"
+    TransactionType:
+      type: string
+      description: Type of transaction.
+      enum:
+      - Exit
+      - Transfer
+      - Deposit
+      - CreateAccountDeposit
+      - CreateAccountDepositTransfer
+      - DepositTransfer
+      - ForceTransfer
+      - ForceExit
+      - TransferToEthAddr
+      - TransferToBJJ
+    TransactionTypeL2:
+      type: string
+      description: Type of transaction.
+      enum:
+      - Exit
+      - Transfer
+      - TransferToEthAddr
+      - TransferToBJJ
+    TokenId:
+      type: integer
+      description: Identifier of a token registered in the network.
+      minimum: 0
+      maximum: 4294967295
+      example: 98765
+    BigInt:
+      type: string
+      description: BigInt is an integer encoded as a string for numbers that are very large.
+      example: "8708856933496328593"
+      pattern: "^\\d+$"
+    FeeSelector:
+      type: integer
+      description: Index of the fee type to select, more info [here](https://docs.hermez.io/#/developers/protocol/hermez-protocol/protocol?id=user).
+      minimum: 0
+      maximum: 256
+      example: 36
+    Nonce:
+      type: integer
+      description: Number that can only be used once per account, increments by one at each transaction.
+      minimum: 0
+      maximum: 1.84467440737096e+19
+      example: 121
+    PoolL2TransactionState:
+      type: string
+      description: > 
+        State of a L2 transaction from the coordinator pool.
+          * pend: Pending
+          * fing: Forging
+          * fged: Forged
+          * invl: Invalid  
+      enum:
+      - pend
+      - fing
+      - fged
+      - invl    
+    ETHSignature:
+      type: string
+      description: Ethereum signature.
+      pattern: "^0x[a-fA-F0-9]{130}$"
+      example: "0xf9161cd688394772d93aa3e7b3f8f9553ca4f94f65b7cece93ed4a239d5c0b4677dca6d1d459e3a5c271a34de735d4664a43e5a8960a9a6e027d12c562dd448e1c"
+    BJJSignature:
+      type: string
+      description: BabyJubJub compressed signature.
+      pattern: "^[a-fA-F0-9]{128}$"
+      example: "72024a43f546b0e1d9d5d7c4c30c259102a9726363adcc4ec7b6aea686bcb5116f485c5542d27c4092ae0ceaf38e3bb44417639bd2070a58ba1aa1aab9d92c03"
+    BatchNum:
+      type: integer
+      description: Identifier of a batch. Every new forged batch increments by one the batchNum, starting at 0.
+      minimum: 0
+      maximum: 4294967295
+      example: 5432
+    AccountCreationAuthorizationPost:
+      type: object
+      properties:
+        hezEthereumAddress:
+          $ref: '#/components/schemas/HezEthereumAddress'
+        bjj:
+          $ref: '#/components/schemas/BJJ'
+        signature:
+          $ref: '#/components/schemas/ETHSignature'
+      example:
+        hezEthereumAddress: hez:0xb5270eB4ae11c6fAAff6F5fa0A5202B8d963634C
+        bjj: hez:hg2Ydsb8O66H-steBR3cnHl944ua7E-PkTJ_SbPBBg5r
+        signature: '0xb7cf237c4a2ff3d4df57752e7b9deb236fa384f03a79d39acf17ec5f8d12a3cf00b017c2466611310cb2bacac68460e96778278646842c6d2bcb79979271c28501'
+      required:
+      - hezEthereumAddress
+      - bjj
+      - signature
+    AccountCreationAuthorization:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        hezEthereumAddress:
+          $ref: '#/components/schemas/HezEthereumAddress'
+        bjj:
+          $ref: '#/components/schemas/BJJ'
+        signature:
+          $ref: '#/components/schemas/ETHSignature'
+      example:
+        hezEthereumAddress: hez:0x74a549b410d01d9eC56346aE52b8550515B283b2
+        bjj: hez:dEZ-Tj7d5h0TAqbnRTTYURYDEo5KZzB87_2WknUU8gCN
+        signature: '0x8db6db2ad6cbe21297fb8ee01c59b01b52d4df7ea92a0f0dee0be0075a8f224a06b367407c8f402cfe0490c142a1c92da3fc29b51162ae160d35e1577d3071bb01'
+        timestamp: '2020-11-17T13:25:36.784295Z'
+      additionalProperties: false
+      required:
+      - timestamp
+      - hezEthereumAddress
+      - bjj
+      - signature
+    AccountCreationAuthorizationPostSuccessResponse:
+      type: object
+      properties:
+        success:
+          type: string
+      example:
+        success: 'OK'
+      additionalProperties: false
+      required:
+      - success
+    HistoryTransaction:
+      type: object
+      description: Transaction of the Hermez Network
+      properties:
+        L1orL2:
+          type: string
+          enum:
+            - L1
+            - L2
+        id:
+          $ref: '#/components/schemas/TransactionId'
+        itemId:
+          $ref: '#/components/schemas/ItemId'
+        type:
+          $ref: '#/components/schemas/TransactionType'
+        position:
+          $ref: '#/components/schemas/TransactionPosition'
+        fromAccountIndex:
+          type: string
+          description: >-
+            Identifier of an account. It references the position where the account is inside the state Merkle tree.
+            The identifier is built using: `hez:` + `token symbol:` + `index`
+          example: "hez:DAI:4444"
+          nullable: true
+        fromHezEthereumAddress:
+          type: string
+          description: "Address of an Ethereum account linked to the Hermez Network."
+          pattern: "^hez:0x[a-fA-F0-9]{40}$"
+          example: "hez:0xaa942cfcd25ad4d90a62358b0dd84f33b398262a"
+          nullable: true
+        fromBJJ:
+          type: string
+          description: "BabyJubJub compressed public key, encoded as base64 URL (RFC 4648), which result in 33 bytes. The padding byte is replaced by a sum of the encoded bytes."
+          pattern: "^hez:[A-Za-z0-9_-]{44}$"
+          example: "hez:9CK9fjQdMUTGm8KDvGLy3MB-vnP0NCcGX7Uh7OO6KRJm"
+          nullable: true
+        toAccountIndex:
+          allOf:
+            - $ref: '#/components/schemas/AccountIndex'
+            - example: "hez:DAI:672"
+        toHezEthereumAddress:
+          type: string
+          description: "Address of an Ethereum account linked to the Hermez Network."
+          pattern: "^hez:0x[a-fA-F0-9]{40}$"
+          example: "hez:0xaa942cfcd25ad4d90a62358b0dd84f33b398262a"
+          nullable: true
+        toBJJ:
+          type: string
+          description: "BabyJubJub compressed public key, encoded as base64 URL (RFC 4648), which result in 33 bytes. The padding byte is replaced by a sum of the encoded bytes."
+          pattern: "^hez:[A-Za-z0-9_-]{44}$"
+          example: "hez:f1J78_6uqTyjX6jrVCqN4RFeRBnWQAGl477ZFtOnH6Sm"
+          nullable: true
+        amount:
+          allOf:
+            - $ref: '#/components/schemas/BigInt'
+            - description: Amount of tokens to be sent.
+            -  example: "4903020000000000000"
+        batchNum:
+          type: integer
+          description: Batch in which the transaction was forged. Null indicates not forged yet.
+          minimum: 0
+          maximum: 4294967295
+          example: 5432
+          nullable: true
+        historicUSD:
+          type: number
+          description: Value in USD at the moment the transaction was forged.
+          example: 49.7
+          nullable: true
+        timestamp:
+          type: string
+          format: date-time
+          description: In the case of L1 indicates the moment where the transaction was added in the smart contract. For L2 indicates when the transaction was forged.
+        token:
+          $ref: '#/components/schemas/Token'
+        L1Info:
+          type: object
+          description: Additional information that only applies to L1 transactions.
+          nullable: true
+          properties:
+            toForgeL1TransactionsNum:
+              $ref: '#/components/schemas/ToForgeL1TransactionsNum'
+            userOrigin:
+              type: boolean
+              description: True if the transaction was sent by a user. False if it was sent by a coordinator.
+            depositAmount:
+              allOf:
+                - $ref: '#/components/schemas/BigInt'
+                - description: Tokens transfered from L1 to L2.
+                - example: "4900000000000000000"
+            amountSuccess:
+              type: boolean
+              description: >-
+                Indicates if the amount specified by the user has been sent propperly. If false, the amount that actualy has been sent is 0.
+                If the transaction hasn't been forged yet (`batchNum == null`), this value will be false, as it's unknown if it has succeed or not.
+                An example were this value could be false: a user send a `DepositTransfer` transaction, but when the tx is forged there are not
+                enougth founds in the account. In this case the transfer part of the transaction won't be effective making the amount have a real value of 0.
+              example: true
+            depositAmountSuccess:
+              type: boolean
+              description: >-
+                Indicates if the deposit amount specified by the user has been sent propperly. If false, the deposit amount that actualy has been sent is 0.
+                If the transaction hasn't been forged yet (`batchNum == null`), this value will be false, as it's unknown if it has succeed or not.
+                An example were this value could be false: a user send a `Deposit` transaction, but when the tx is forged the token id is not registered on the network.
+                In this case transaction won't be effective making the deposit amount have a real value of 0.
+              example: true
+            historicDepositAmountUSD:
+              type: number
+              description: Deposit amount in USD, at the moment the transaction was made.
+              example: 3.897
+              nullable: true
+            ethereumBlockNum:
+              allOf:
+                - $ref: '#/components/schemas/EthBlockNum'
+                - description: Ethereum block in which the transaction was added to the smart contract forge queue.
+                - example: 258723049
+            ethereumTxHash:
+              type: string
+              description: hash of the Ethereum transaction in which the tx was mined
+              example: "0xae98c94d860f01a17f961bf4bdfb6e0c6cd10d3fda5cc861e805ca1240c58553"
+            l1Fee:
+              type: string
+              description: fee spent by the user
+              example: "50000000"
+              nullable: true
+          required:
+            - toForgeL1TransactionsNum
+            - userOrigin
+            - depositAmount
+            - amountSuccess
+            - depositAmountSuccess
+            - historicDepositAmountUSD
+            - ethereumBlockNum
+            - ethereumTxHash
+            - l1Fee
+          additionalProperties: false
+        L2Info:
+          type: object
+          description: Additional information that only applies to L2 transactions.
+          nullable: true
+          properties:
+            fee:
+              $ref: '#/components/schemas/FeeSelector'
+            historicFeeUSD:
+              type: number
+              description: Fee in USD, at the moment the transaction was forged.
+              example: 263.89
+              nullable: true
+            nonce:
+              $ref: '#/components/schemas/Nonce'
+          example: null
+          required:
+            - fee
+            - historicFeeUSD
+            - nonce
+          additionalProperties: false
+      example:
+        L1Info:
+          ethereumBlockNum: 1
+          historicDepositAmountUSD: 232.47
+          depositAmount: '261'
+          toForgeL1TransactionsNum: 10
+          userOrigin: true
+          ethereumTxHash: "0xae98c94d860f01a17f961bf4bdfb6e0c6cd10d3fda5cc861e805ca1240c58553"
+          l1Fee: "5000000"
+        L1orL2: L1
+        L2Info: 
+        amount: '261'
+        batchNum: 1
+        fromAccountIndex: hez:ETH:276
+        fromBJJ: hez:p_OohTzjzZnD3Sw93HQlK13DSxfD6lyvbfhh2kBsV6Z4
+        fromHezEthereumAddress: hez:0x0000000000000000000000000000000000000114
+        historicUSD: 3784.19
+        id: '0x00000000000000000a000400'
+        itemId: 2
+        position: 4
+        timestamp: '2020-11-17T14:08:12.197554Z'
+        toAccountIndex: hez:ETH:276
+        toBJJ: hez:p_OohTzjzZnD3Sw93HQlK13DSxfD6lyvbfhh2kBsV6Z4
+        toHezEthereumAddress: hez:0x0000000000000000000000000000000000000114
+        token:
+          USD: 234.56
+          decimals: 18
+          ethereumAddress: '0x0000000000000000000000000000000000000000'
+          ethereumBlockNum: 0
+          fiatUpdate: 
+          id: 0
+          itemId: 1
+          name: Ether
+          symbol: ETH
+        type: CreateAccountDeposit
+      required:
+        - L1orL2
+        - id
+        - itemId
+        - type
+        - position
+        - fromAccountIndex
+        - fromHezEthereumAddress
+        - fromBJJ
+        - toAccountIndex
+        - toHezEthereumAddress
+        - toBJJ
+        - amount
+        - batchNum
+        - historicUSD
+        - timestamp
+        - token
+        - L1Info
+        - L2Info
+      additionalProperties: false
+    HistoryTransactions:
+      type: object
+      properties:
+        transactions:
+          type: array
+          description: List of history transactions.
+          items: 
+            $ref: '#/components/schemas/HistoryTransaction'
+        pendingItems:
+          $ref: '#/components/schemas/PendingItems'
+      example:
+        transactions:
+          - L1Info:
+              ethereumBlockNum: 3
+              historicDepositAmountUSD: 
+              depositAmount: '0'
+              toForgeL1TransactionsNum: 7
+              userOrigin: true
+              ethereumTxHash: "0xae98c94d860f01a17f961bf4bdfb6e0c6cd10d3fda5cc861e805ca1240c58553"
+              l1Fee: "5000000"
+            L1orL2: L1
+            L2Info: 
+            amount: '88888800000000000'
+            batchNum: 9
+            fromAccountIndex: hez:ETH:262
+            fromBJJ: hez:Mj_xDCjfN-y3h_4hbhEdtkqnz6LFF1Cf4AV_8IoQswwh
+            fromHezEthereumAddress: hez:0x2B5AD5c4795c026514f8317c7a215E218DcCD6cF
+            historicUSD: 44.4444
+            id: '0x000000000000000007000300'
+            itemId: 28
+            position: 3
+            timestamp: '2020-11-26T09:18:40.004749Z'
+            toAccountIndex: hez:EXIT:1
+            toBJJ: 
+            toHezEthereumAddress: 
+            token:
+              USD: 500
+              decimals: 18
+              ethereumAddress: '0x0000000000000000000000000000000000000000'
+              ethereumBlockNum: 0
+              fiatUpdate: '2020-11-26T09:18:27.034866Z'
+              id: 0
+              itemId: 1
+              name: Ether
+              symbol: ETH
+            type: ForceExit
+          - L1Info: 
+            L1orL2: L2
+            L2Info:
+              fee: 123
+              historicFeeUSD: 2.15037380962404
+              nonce: 1
+            amount: '55555500000000000'
+            batchNum: 8
+            fromAccountIndex: hez:TKN1:264
+            fromBJJ: hez:Mj_xDCjfN-y3h_4hbhEdtkqnz6LFF1Cf4AV_8IoQswwh
+            fromHezEthereumAddress: hez:0x2B5AD5c4795c026514f8317c7a215E218DcCD6cF
+            historicUSD: 23.4999765
+            id: '0x020000000001080000000001'
+            itemId: 19
+            position: 2
+            timestamp: '2020-11-26T09:18:40.004749Z'
+            toAccountIndex: hez:TKN1:260
+            toBJJ: hez:81h61cx0FKR1RXcLbHW8cZMPY8SR6yKU3ei4pmcLjpaQ
+            toHezEthereumAddress: hez:0x6813Eb9362372EEF6200f3b1dbC3f819671cBA69
+            token:
+              USD: 423
+              decimals: 18
+              ethereumAddress: '0x0000000000000000000000000000000000000064'
+              ethereumBlockNum: 2
+              fiatUpdate: '2020-11-26T09:18:27.04357Z'
+              id: 1
+              itemId: 2
+              name: Test Token 1
+              symbol: TKN1
+            type: Transfer
+          - L1Info: 
+            L1orL2: L2
+            L2Info:
+              fee: 44
+              historicFeeUSD: 0.1973587359744
+              nonce: 2
+            amount: '66666600000000000'
+            batchNum: 8
+            fromAccountIndex: hez:ETH:259
+            fromBJJ: hez:W6x4TZOAZ9mAqdOb3Xm_hKDLspaXfEfMMN4tXOkinS-W
+            fromHezEthereumAddress: hez:0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf
+            historicUSD: 33.3333
+            id: '0x020000000001030000000002'
+            itemId: 20
+            position: 3
+            timestamp: '2020-11-26T09:18:40.004749Z'
+            toAccountIndex: hez:EXIT:1
+            toBJJ: 
+            toHezEthereumAddress: 
+            token:
+              USD: 500
+              decimals: 18
+              ethereumAddress: '0x0000000000000000000000000000000000000000'
+              ethereumBlockNum: 0
+              fiatUpdate: '2020-11-26T09:18:27.034866Z'
+              id: 0
+              itemId: 1
+              name: Ether
+              symbol: ETH
+            type: Exit
+          - L1Info:
+              ethereumBlockNum: 3
+              historicDepositAmountUSD: 14099.9999859
+              depositAmount: '33333333300000000000'
+              toForgeL1TransactionsNum: 2
+              userOrigin: true
+              ethereumTxHash: "0xae98c94d860f01a17f961bf4bdfb6e0c6cd10d3fda5cc861e805ca1240c58553"
+              l1Fee: "5000000"
+            L1orL2: L1
+            L2Info: 
+            amount: '0'
+            batchNum: 4
+            fromAccountIndex: hez:TKN1:0
+            fromBJJ: hez:W6x4TZOAZ9mAqdOb3Xm_hKDLspaXfEfMMN4tXOkinS-W
+            fromHezEthereumAddress: hez:0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf
+            historicUSD: 
+            id: '0x000000000000000002000000'
+            itemId: 9
+            position: 0
+            timestamp: '2020-11-26T09:18:40.004749Z'
+            toAccountIndex: hez:TKN1:0
+            toBJJ: 
+            toHezEthereumAddress: 
+            token:
+              USD: 423
+              decimals: 18
+              ethereumAddress: '0x0000000000000000000000000000000000000064'
+              ethereumBlockNum: 2
+              fiatUpdate: '2020-11-26T09:18:27.04357Z'
+              id: 1
+              itemId: 2
+              name: Test Token 1
+              symbol: TKN1
+            type: CreateAccountDeposit
+          - L1Info: 
+            L1orL2: L2
+            L2Info:
+              fee: 2
+              historicFeeUSD: 3.87833366166246e-17
+              nonce: 1
+            amount: '11111100000000000'
+            batchNum: 7
+            fromAccountIndex: hez:TKN1:261
+            fromBJJ: hez:W6x4TZOAZ9mAqdOb3Xm_hKDLspaXfEfMMN4tXOkinS-W
+            fromHezEthereumAddress: hez:0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf
+            historicUSD: 4.6999953
+            id: '0x020000000001050000000001'
+            itemId: 15
+            position: 2
+            timestamp: '2020-11-26T09:18:40.004749Z'
+            toAccountIndex: hez:TKN1:264
+            toBJJ: hez:Mj_xDCjfN-y3h_4hbhEdtkqnz6LFF1Cf4AV_8IoQswwh
+            toHezEthereumAddress: hez:0x2B5AD5c4795c026514f8317c7a215E218DcCD6cF
+            token:
+              USD: 423
+              decimals: 18
+              ethereumAddress: '0x0000000000000000000000000000000000000064'
+              ethereumBlockNum: 2
+              fiatUpdate: '2020-11-26T09:18:27.04357Z'
+              id: 1
+              itemId: 2
+              name: Test Token 1
+              symbol: TKN1
+            type: Transfer
+        pendingItems: 23
+      required:
+        - transactions
+        - pendingItems
+      additionalProperties: false
+    EthBlockNum:
+      type: integer
+      description: Ethereum block number
+      minimum: 0
+      maximum: 1.84467440737096e+19
+      example: 762375478
+    ToForgeL1TransactionsNum:
+      type: integer
+      description: Reference to know in which batch a L1 transaction was forged / will be forged.
+      minimum: 0
+      maximum: 4294967295
+      example: 784
+      nullable: true
+    TransactionPosition:
+      type: integer
+      description: Position that a transaction occupies in a batch.
+      minimum: 0
+      example: 5
+    URL:
+      type: string
+      description: HTTP URL
+      example: "https://apimock.hermez.network"
+    TokenSymbol:
+      type: string
+      description: Abreviation of the token name.
+      example: "DAI"
+    TokenName:
+      type: string
+      description: Token name.
+      example: "Dai"
+    CollectedFees:
+      type: object
+      description: Collected fees by the forger of the batch, represented by a map of tokenId => amount. A maximum of 64 different tokens can be used.
+      additionalProperties:
+        type: string
+      example:
+        1234: "425632785672345647"
+        4321: "86538967235465432654352"
+    Batch:
+      type: object
+      description: Group of transactions forged in a coordinator and sent and validated in Ethereum.
+      properties:
+        itemId:
+          $ref: '#/components/schemas/ItemId'
+        batchNum:
+          $ref: '#/components/schemas/BatchNum'
+        ethereumBlockNum:
+          $ref: '#/components/schemas/EthBlockNum'
+        ethereumBlockHash:
+          type: string
+          description: hash of the Ethereum block in which the batch was forged
+          example: "0xfe88c94d860f01a17f961bf4bdfb6e0c6cd10d3fda5cc861e805ca1240c58553"
+        ethereumTxHash:
+          type: string
+          description: hash of the Ethereum transaction in which the batch was forged
+          example: "0xae98c94d860f01a17f961bf4bdfb6e0c6cd10d3fda5cc861e805ca1240c58553"
+        timestamp:
+          type: string
+          format: date-time
+          description: Time in which the batch was forged.
+        forgerAddr:
+          $ref: '#/components/schemas/EthereumAddress'
+        collectedFees:
+          $ref: '#/components/schemas/CollectedFees'
+        historicTotalCollectedFeesUSD:
+          type: number
+          description: Sum of the all the fees collected, in USD, at the moment the batch was forged.
+          example: 23.3
+        stateRoot:
+          allOf:
+            - $ref: '#/components/schemas/Hash'
+            - description: Root of the accounts Merkle Tree.
+            - example: "2734657026572a8708d883"
+        numAccounts:
+          type: integer
+          description: Number of registered accounts in this batch.
+        exitRoot:
+          allOf:
+            - $ref: '#/components/schemas/Hash'
+            - description: Root of the exit Merkle Tree associated to this batch.
+            - example: "2734657026572a8708d883"
+        forgeL1TransactionsNum:
+          type: integer
+          description: Identifier that corresponds to the group of L1 transactions forged in the current batch.
+          example: 5
+          nullable: true
+        slotNum:
+          $ref: '#/components/schemas/SlotNum'
+        forgedTransactions:
+          type: integer
+          description: Amount of forged transactions in this batch.
+          example: 318
+      additionalProperties: false
+      required:
+          - itemId
+          - batchNum
+          - ethereumTxHash
+          - ethereumBlockNum
+          - ethereumBlockHash
+          - timestamp
+          - forgerAddr
+          - collectedFees
+          - historicTotalCollectedFeesUSD
+          - stateRoot
+          - numAccounts
+          - exitRoot
+          - forgeL1TransactionsNum
+          - slotNum
+          - forgedTransactions
+    FullBatch:
+      type: object
+      description: Group of transactions forged in a coordinator and sent and validated in Ethereum.
+      properties:
+        batch:
+          $ref: '#/components/schemas/Batch'
+        transactions:
+          type: array
+          description: List of forged transactions in the batch
+          items:
+            $ref: '#/components/schemas/HistoryTransaction'
+          nullable: true
+      additionalProperties: false
+      required:
+        - batch
+        - transactions
+    Hash:
+      type: string
+      description: hashed data
+      example: "2734657026572a8708d883"
+    SlotNum:
+      type: integer
+      description: Identifier of a slot.
+      minimum: 0
+      maximum: 4294967295
+      example: 784        
+    Batches:
+      type: object
+      properties:
+        batches:
+          type: array
+          description: List of batches.
+          items:
+            $ref: '#/components/schemas/Batch'
+        pendingItems:
+          $ref: '#/components/schemas/PendingItems'
+      additionalProperties: false
+      required:
+        - batches
+        - pendingItems
+    Coordinator:
+      type: object
+      properties:
+        itemId:
+          $ref: '#/components/schemas/ItemId'
+        forgerAddr:
+          $ref: '#/components/schemas/EthereumAddress'
+        bidderAddr:
+          $ref: '#/components/schemas/EthereumAddress'
+        URL:
+          $ref: '#/components/schemas/URL'
+        ethereumBlock:
+          allOf:
+            - $ref: '#/components/schemas/EthBlockNum'
+            - description: Ethereum block in which the coordinator registered into the network.
+            - example: 5735943738
+      additionalProperties: false
+      required:
+        - itemId
+        - forgerAddr
+        - bidderAddr
+        - URL
+        - ethereumBlock
+    Coordinators:
+      type: object
+      properties:
+        coordinators:
+          type: array
+          description: List of coordinators.
+          items: 
+            $ref: '#/components/schemas/Coordinator'
+        pendingItems:
+          $ref: '#/components/schemas/PendingItems'
+      additionalProperties: false
+      required:
+        - coordinators
+        - pendingItems
+    Bid:
+      type: object
+      description: Tokens placed in an auction by a coordinator to gain the right to forge batches during a specific slot.
+      properties:
+        itemId:
+          $ref: '#/components/schemas/ItemId'
+        bidderAddr:
+          $ref: '#/components/schemas/EthereumAddress'
+        forgerAddr:
+          $ref: '#/components/schemas/EthereumAddress'
+        slotNum:
+          $ref: '#/components/schemas/SlotNum'
+        URL:
+          $ref: '#/components/schemas/URL'
+        bidValue:
+          $ref: '#/components/schemas/BigInt'
+        ethereumBlockNum:
+          $ref: '#/components/schemas/EthBlockNum'
+        timestamp:
+          type: string
+          format: date-time
+      additionalProperties: false
+      required:
+        - bidderAddr
+        - forgerAddr
+        - slotNum
+        - URL
+        - bidValue
+        - ethereumBlockNum
+        - timestamp
+    Bids:
+      type: object
+      properties:
+        bids:
+          type: array
+          description: List of bids.
+          items: 
+            $ref: '#/components/schemas/Bid'
+        pendingItems:
+          $ref: '#/components/schemas/PendingItems'
+      additionalProperties: false
+      required:
+        - bids
+        - pendingItems
+    RecommendedFee:  
+      type: object
+      description: Fee that the coordinator recommends per transaction in USD.
+      properties:
+        existingAccount:
+          type: number
+          description: Recommended fee if the destination account of the transaction already exists.
+          minimum: 0
+          example: 0.1
+        createAccount:
+          type: number
+          description: Recommended fee if the destination account of the transaction doesn't exist, but the coordinator has an authorization to create a valid account associated to an Ethereum address and a BJJ public key controlled by the receiver.
+          minimum: 0
+          example: 1.3
+        createAccountInternal:
+          type: number
+          description: Recommended fee if the destination account of the transaction doesn't exist, but the coordinator has the ability to create a valid account associated to a BJJ public key controlled by the receiver. Note that these kind of accounts are not associated with an Ethereum address and therefore can only operate in L2. 
+          minimum: 0
+          example: 0.5
+      required:
+        - existingAccount
+        - createAccount
+        - createAccountInternal
+      additionalProperties: false
+    Token:
+      type: object
+      description: Hermez Network compatible and registered token.
+      properties:
+        id:
+          $ref: '#/components/schemas/TokenId'
+        ethereumAddress:
+          allOf:
+            - $ref: '#/components/schemas/EthereumAddress'
+            - description: Ethereum address in which the token is deployed.
+            - example: "0xaa942cfcd25ad4d90a62358b0dd84f33b398262a"
+        itemId:
+          $ref: '#/components/schemas/ItemId'
+        name:
+          type: string
+          description: full name of the token
+          example: Maker Dai
+        symbol:
+          allOf:
+            - $ref: '#/components/schemas/TokenSymbol'
+            - example: DAI
+        decimals:
+          type: integer
+          description: Number of decimals of the token.
+          example: 18
+        ethereumBlockNum:
+          allOf:
+            - $ref: '#/components/schemas/EthBlockNum'
+            - description: Ethereum block number in which the token was added to the Hermez Network.
+            - example: 539847538
+        USD:
+          type: number
+          description: Value of the token in USD.
+          example: 1.01
+          nullable: true
+        fiatUpdate:
+          type: string
+          format: date-time
+          description: Timestamp of the moment the `USD` value was updated.
+          nullable: true
+      required:
+        - id
+        - ethereumAddress
+        - itemId
+        - name
+        - symbol
+        - decimals
+        - ethereumBlockNum
+        - USD
+        - fiatUpdate
+      additionalProperties: false
+    Tokens:
+      type: object
+      properties:
+        tokens:
+          type: array
+          description: List of tokens.
+          items: 
+            $ref: '#/components/schemas/Token'
+        pendingItems:
+          $ref: '#/components/schemas/PendingItems'
+    Exit:
+      type: object
+      description: Exit tree leaf. It Contains the necessary information to perform a withdrawal.
+      properties:
+        batchNum:
+          allOf:
+            - $ref: '#/components/schemas/BatchNum'
+            - description: Batch in which the exit was forged.
+            - example: 7394
+        accountIndex:
+          $ref: '#/components/schemas/AccountIndex'
+        bjj:
+          $ref: '#/components/schemas/BJJ'      
+        hezEthereumAddress:
+          $ref: '#/components/schemas/HezEthereumAddress'
+        itemId:
+          $ref: '#/components/schemas/ItemId'
+        merkleProof:
+          type: object
+          description: Existence proof of a leaf in a given Merkle Root. Encoded as hexadecimal string.
+          properties:
+              root:
+                $ref: '#/components/schemas/BigInt'
+              siblings:
+                type: array
+                items:
+                  $ref: '#/components/schemas/BigInt'
+              oldKey:
+                $ref: '#/components/schemas/BigInt'
+              oldValue:
+                $ref: '#/components/schemas/BigInt'
+              isOld0:
+                type: boolean
+              key:
+                $ref: '#/components/schemas/BigInt'
+              value:
+                $ref: '#/components/schemas/BigInt'
+              fnc:
+                type: integer
+                maximum: 3
+                minimum: 0
+          required:
+            - root
+            - siblings
+            - oldKey
+            - oldValue
+            - isOld0
+            - key
+            - value
+            - fnc
+          additionalProperties: false
+        balance:
+          $ref: '#/components/schemas/BigInt'
+        instantWithdraw:
+          type: integer
+          description: Block in which the exit balance was instantly withdrawn. Null indicates that an instant withdrawn hasn't been performed.
+          minimum: 0
+          maximum: 1.84467440737096e+19
+          example: 74747363
+          nullable: true
+        delayedWithdrawRequest:
+          type: integer
+          description: Block in which the exit balance was requested to delay withdraw. Null indicates that a delay withdraw hasn't been performed.
+          minimum: 0
+          maximum: 1.84467440737096e+19
+          example: null
+          nullable: true
+        delayedWithdraw:
+          type: integer
+          description: Block in which the exit balance was delayed withdrawn after a delay withdraw request. Null indicates that a delay withdraw hasn't been performed.
+          minimum: 0
+          maximum: 1.84467440737096e+19
+          example: null
+          nullable: true
+        token:
+          $ref: '#/components/schemas/Token'
+      required:
+          - batchNum
+          - accountIndex
+          - bjj
+          - hezEthereumAddress
+          - itemId
+          - merkleProof
+          - balance
+          - instantWithdraw
+          - delayedWithdrawRequest
+          - delayedWithdraw
+          - token
+      additionalProperties: false
+    Exits:
+      type: object
+      properties:
+        exits:
+          type: array
+          description: List of exits.
+          items: 
+            $ref: '#/components/schemas/Exit'
+        pendingItems:
+          $ref: '#/components/schemas/PendingItems'   
+      required:
+          - exits
+          - pendingItems
+      additionalProperties: false 
+    Account:
+      type: object
+      description: State tree leaf. It contains balance and nonce of an account.
+      properties:
+        itemId:
+          $ref: '#/components/schemas/ItemId'
+        accountIndex:
+          $ref: '#/components/schemas/AccountIndex'
+        nonce:
+          $ref: '#/components/schemas/Nonce'      
+        balance:
+          $ref: '#/components/schemas/BigInt'
+        bjj:
+          $ref: '#/components/schemas/BJJ'      
+        hezEthereumAddress:
+          $ref: '#/components/schemas/HezEthereumAddress'
+        token:
+          $ref: '#/components/schemas/Token'
+      example:
+        accountIndex: hez:ETH:259
+        balance: '2590000000000000000'
+        bjj: hez:W6x4TZOAZ9mAqdOb3Xm_hKDLspaXfEfMMN4tXOkinS-W
+        hezEthereumAddress: hez:0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf
+        itemId: 4
+        nonce: 0
+        token:
+          USD: 500
+          decimals: 18
+          ethereumAddress: '0x0000000000000000000000000000000000000000'
+          ethereumBlockNum: 0
+          fiatUpdate: '2020-11-26T09:53:47.444444Z'
+          id: 0
+          itemId: 1
+          name: Ether
+          symbol: ETH
+      additionalProperties: false
+      required:
+        - itemId
+        - accountIndex
+        - nonce
+        - balance
+        - bjj
+        - hezEthereumAddress
+        - token
+    Accounts:
+      type: object
+      properties:
+        accounts:
+          type: array
+          description: List of accounts.
+          items: 
+            $ref: '#/components/schemas/Account'
+        pendingItems:
+          $ref: '#/components/schemas/PendingItems'
+      example:
+        accounts:
+        - accountIndex: hez:ETH:259
+          balance: '2590000000000000000'
+          bjj: hez:W6x4TZOAZ9mAqdOb3Xm_hKDLspaXfEfMMN4tXOkinS-W
+          hezEthereumAddress: hez:0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf
+          itemId: 4
+          nonce: 0
+          token:
+            USD: 500
+            decimals: 18
+            ethereumAddress: '0x0000000000000000000000000000000000000000'
+            ethereumBlockNum: 0
+            fiatUpdate: '2020-11-26T09:53:47.444444Z'
+            id: 0
+            itemId: 1
+            name: Ether
+            symbol: ETH
+        - accountIndex: hez:TKN1:261
+          balance: '2610000000'
+          bjj: hez:W6x4TZOAZ9mAqdOb3Xm_hKDLspaXfEfMMN4tXOkinS-W
+          hezEthereumAddress: hez:0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf
+          itemId: 6
+          nonce: 0
+          token:
+            USD: 423
+            decimals: 18
+            ethereumAddress: '0x0000000000000000000000000000000000000064'
+            ethereumBlockNum: 2
+            fiatUpdate: '2020-11-26T09:53:47.456619Z'
+            id: 1
+            itemId: 2
+            name: Test Token 1
+            symbol: TKN1
+        pendingItems: 0
+      additionalProperties: false
+      required:
+        - accounts
+        - pendingItems
+    Slot:
+      type: object
+      description: Slot information.
+      properties:
+        itemId:
+          $ref: '#/components/schemas/ItemId'
+        slotNum:
+          $ref: '#/components/schemas/SlotNum'
+        firstBlock:
+          allOf:
+            - $ref: '#/components/schemas/EthBlockNum'
+            - description: Block in which the slot began or will begin
+            - example: 76238647846
+        lastBlock:
+          allOf:
+            - $ref: '#/components/schemas/EthBlockNum'
+            - description: Block in which the slot ended or will end
+            - example: 4475934
+        openAuction:
+          type: boolean
+          description: Whether the auction of the slot is open or not.
+        bestBid:
+          type: object
+          description: The best bid of the auction. If the bestBid is null, it is because no coordinator has bid for that slot.
+          nullable: true
+          properties:
+            itemId:
+              $ref: '#/components/schemas/ItemId'
+            bidderAddr:
+              $ref: '#/components/schemas/EthereumAddress'
+            forgerAddr:
+              $ref: '#/components/schemas/EthereumAddress'
+            slotNum:
+              $ref: '#/components/schemas/SlotNum'
+            URL:
+              $ref: '#/components/schemas/URL'
+            bidValue:
+              type: string
+              description: BigInt is an integer encoded as a string for numbers that are very large.
+              example: "8708856933496328593"
+              pattern: "^\\d+$"
+            ethereumBlockNum:
+              $ref: '#/components/schemas/EthBlockNum'
+            timestamp:
+              type: string
+              format: date-time
+          additionalProperties: false
+          required:
+            - bidderAddr
+            - forgerAddr
+            - slotNum
+            - URL
+            - bidValue
+            - ethereumBlockNum
+            - timestamp
+      additionalProperties: false
+      required:
+        - slotNum
+        - firstBlock
+        - lastBlock
+        - openAuction
+        - bestBid
+    Slots:
+      type: object
+      properties:
+        slots:
+          type: array
+          description: List of slots.
+          items: 
+            allOf:
+                - $ref: '#/components/schemas/Slot'
+                - description: Last synchronized Ethereum block.
+        pendingItems:
+          $ref: '#/components/schemas/PendingItems'
+      additionalProperties: false
+      required:
+        - slots
+        - pendingItems
+    NextForger:
+      type: object
+      description: Coordinator information along with the scheduled forging period
+      properties:
+        coordinator:
+          $ref: '#/components/schemas/Coordinator'
+        period:
+          type: object
+          description: Time period in which the coordinator will have the ability to forge. Specified both in Ethereum blocks and timestamp
+          properties:
+            slotNum:
+              $ref: '#/components/schemas/SlotNum'
+            fromBlock:
+              $ref: '#/components/schemas/EthBlockNum'
+            toBlock:
+              $ref: '#/components/schemas/EthBlockNum'
+            fromTimestamp:
+              type: string
+              format: date-time
+            toTimestamp:
+              type: string
+              format: date-time
+          required:
+            - slotNum
+            - fromBlock
+            - toBlock
+            - fromTimestamp
+            - toTimestamp
+          additionalProperties: false
+      required:
+        - coordinator
+        - period
+      additionalProperties: false
+    NextForgers:
+      type: array
+      description: List of next coordinators to forge.
+      items: 
+        $ref: '#/components/schemas/NextForger'
+    Node:
+      type: object
+      description: Configuration and metrics of the coordinator node. Note that this is specific for each coordinator.
+      properties:
+        forgeDelay:
+          type: number
+          description: |
+            Delay in seconds after which a batch is forged if the slot is
+            already committed. If set to 0s, the coordinator will continuously
+            forge at the maximum rate. Note that this is a configuration parameter of a node,
+            so each coordinator may have a different value.
+          example: 193.4
+        poolLoad:
+          type: number
+          description: Number of pending transactions in the pool
+          example: 23201
+      additionalProperties: false
+      required: 
+        - forgeDelay
+        - poolLoad
+    State:
+      type: object
+      description: Gobal variables of the network
+      properties:
+        network:
+          $ref: '#/components/schemas/StateNetwork'
+        metrics:
+          $ref: '#/components/schemas/StateMetrics'
+        rollup:
+          $ref: '#/components/schemas/StateRollup'
+        auction:
+          $ref: '#/components/schemas/StateAuction'
+        withdrawalDelayer:
+          $ref: '#/components/schemas/StateWithdrawDelayer'
+        recommendedFee:
+          $ref: '#/components/schemas/RecommendedFee'
+        node:
+          $ref: '#/components/schemas/Node'
+      additionalProperties: false
+      required: 
+        - network
+        - metrics
+        - rollup
+        - auction
+        - withdrawalDelayer
+        - recommendedFee
+        - node
+    StateNetwork:
+      type: object
+      description: Gobal statistics of the network
+      properties:
+        lastEthereumBlock:
+          allOf:
+            - $ref: '#/components/schemas/EthBlockNum'
+            - description: Current Ethereum block. Note that this is the actual last block of Ethereum, not the last synchronized block by the node.
+            - example: 3457437
+        lastSynchedBlock:
+          allOf:
+            - $ref: '#/components/schemas/EthBlockNum'
+            - description: Last synchronized Ethereum block. Compare with lastEthereumBlock to check the synchronization status of the node.
+            - example: 3457437
+        lastBatch:
+          $ref: '#/components/schemas/Batch'
+        currentSlot:
+          allOf:
+            - $ref: '#/components/schemas/SlotNum'
+            - description: Slot where batches are currently being forged.
+            - example: 2334
+        nextForgers:
+          $ref: '#/components/schemas/NextForgers'
+        pendingL1Transactions:
+          type: number
+          description: Number of pending L1 transactions (added in the smart contract queue but not forged).
+          example: 22
+      additionalProperties: false
+      required: 
+        - lastEthereumBlock
+        - lastSynchedBlock 
+        - lastBatch
+        - currentSlot
+        - nextForgers
+    StateAuction:
+      type: object
+      description: Auction parameters.
+      properties:
+        ethereumBlockNum:
+          $ref: '#/components/schemas/EthBlockNum'
+        bootCoordinator:
+          allOf:
+            - $ref: '#/components/schemas/EthereumAddress'
+            - description: Ethereum address of the boot coordinator.
+            - example: "0x997dc4262BCDbf85190C01c996b4C06a461d2430"
+        bootCoordinatorUrl:
+          type: string
+          description: Boot Coordinator URL
+          example: "https://boot.coordinator.io"
+        slotDeadline:
+          type: integer
+          description: Number of blocks after the beginning of a slot after which any coordinator can forge if the winner has not forged any batch in that slot.
+          example: 3
+        closedAuctionSlots:
+          type: integer
+          description: Amount of slots between the current slot and the slot auction that is closed. Example if the value is 2, when slot 10 begins, the auction of the slot 12 gets closed.
+          example: 2
+        openAuctionSlots:
+          type: integer
+          description: Amount of days in advance are auctions opened.
+        defaultSlotSetBid:
+          type: array
+          description: "Initial minimal bid for each auction. Expressed as an array of 6 values. To calculate which value corresponds to each slot: `initialMinimalBidding[slotNum%6]`."
+          items:
+            type: string
+          example: ["32","0","68","21","55","99"]
+        defaultSlotSetBidSlotNum:
+          type: integer
+          description: Slot in which the changes will be applied for the first time.
+        outbidding:
+          type: number
+          description: Minimum outbid over the previous one to consider it valid.
+          example: 3.64
+        donationAddress:
+          allOf:
+            - $ref: '#/components/schemas/EthereumAddress'
+            - description: Ethereum address where the donations will go to.
+            - example: "0x887dc4262BCDbf85190C01c996b4C06a461d2430"
+        allocationRatio:
+          type: array
+          description: Percentage in which fees will be split between donations, governance, and burning. The sum of the tree values should be 100.
+          items:
+            type: integer
+          example: [80,10,10]
+      additionalProperties: false
+      required:
+        - ethereumBlockNum
+        - bootCoordinator
+        - bootCoordinatorUrl
+        - slotDeadline
+        - closedAuctionSlots
+        - openAuctionSlots
+        - defaultSlotSetBid
+        - outbidding
+        - donationAddress
+        - allocationRatio
+    StateRollup:
+      type: object
+      description: Rollup parameters
+      properties:
+        ethereumBlockNum:
+          $ref: '#/components/schemas/EthBlockNum'
+        forgeL1L2BatchTimeout:
+          type: integer
+          description: Max Ethereum blocks after the last L1-L2-batch, when exceeds the timeout only L1-L2-batch are allowed.
+          example: 5
+        feeAddToken:
+          type: string
+          description: Fee to pay when registering tokens into the network.
+          example: "5698"
+        withdrawalDelay:
+          type: integer
+          description: Withdraw delay in seconds
+          example: 432000
+        buckets:
+          type: array
+          description: List of buckets state
+          items:
+            type: object
+            properties:
+              ceilUSD:
+                type: string
+                description: Max USD value that bucket holds
+                example: "1000"
+              blockStamp:
+                type: string
+                description: Block number of the last bucket update
+                example: "1"
+              withdrawals:
+                type: string
+                description: Available withdrawals of the bucket
+                example: "4"
+              rateBlocks:
+                type: string
+                description: rateBlocks every `rateBlocks` blocks add `rateWithdrawals` withdrawal
+                example: "2"
+              rateWithdrawals:
+                type: string
+                description: add `rateWithdrawals` every `rateBlocks`
+                example: "3"
+              maxWithdrawals:
+                type: string
+                description: Max withdrawals the bucket can hold
+                example: "4"
+            additionalProperties: false
+            required: 
+              - ceilUSD
+              - blockStamp
+              - withdrawals
+              - rateBlocks
+              - rateWithdrawals
+              - maxWithdrawals
+          additionalProperties: false
+          required:
+            - ethereumBlockNum
+            - forgeL1L2BatchTimeout
+            - feeAddToken
+            - withdrawalDelay
+            - buckets
+    StateWithdrawDelayer:
+      type: object
+      description: Withdrawal delayer parameters
+      properties:
+        ethereumBlockNum:
+          $ref: '#/components/schemas/EthBlockNum'
+        hermezGovernanceAddress:
+          allOf:
+            - $ref: '#/components/schemas/EthereumAddress'
+            - description: Ethereum address of the governance.
+            - example: "0x667dc4262BCDbf85190C01c996b4C06a461d2430"
+        emergencyCouncilAddress:
+          allOf:
+            - $ref: '#/components/schemas/EthereumAddress'
+            - description: Ethereum address that can claim the funds in an emergency when the maximum emergency mode time is exceeded.
+            - example: "0x557dc4262BCDbf85190C01c996b4C06a461d2430"
+        withdrawalDelay:
+          allOf:
+            - $ref: '#/components/schemas/EthBlockNum'
+            - description: The time that everyone needs to wait until a withdrawal of the funds is allowed, in seconds.
+            - example: 539573849
+        emergencyModeStartingBlock:
+          type: integer
+          description: Block number in which the emergency mode has been activated.
+          example: 10
+        emergencyMode:
+          type: boolean
+          description: Indicates if emergency mode has been activated.
+          example: false
+      additionalProperties: false
+      required: 
+        - ethereumBlockNum
+        - hermezGovernanceAddress
+        - emergencyCouncilAddress
+        - withdrawalDelay
+        - emergencyModeStartingBlock
+        - emergencyMode
+    StateMetrics:
+      type: object
+      description: Metrics of the network
+      properties:
+        transactionsPerBatch:
+          type: number
+          description: Average transactions per batch in the last 24 hours.
+          example: 2002.7
+        batchFrequency:
+          type: number
+          description: Average elapsed time between batches in the last 24 hours, in seconds.
+          example: 8.9
+        transactionsPerSecond:
+          type: number
+          description: Average transactions per second in the last 24 hours.
+          example: 302.3
+        tokenAccounts:
+          type: integer
+          description: Number of created accounts.
+          example: 90473
+        wallets:
+          type: integer
+          description: Number of different registered BJJs.
+          example: 23067
+        avgTransactionFee:
+          type: number
+          description: Average fee percentage paid for L2 transactions in the last 24 hours.
+          example: 1.54
+        estimatedTimeToForgeL1:
+          type: number
+          description: Estimated time needed to forge a L1 transaction, from the time it's added on the smart contract, until it's actualy forged. In seconds.
+          example: 193.4
+      additionalProperties: false
+      required:
+        - transactionsPerBatch
+        - batchFrequency
+        - transactionsPerSecond
+        - tokenAccounts
+        - wallets
+        - avgTransactionFee
+        - estimatedTimeToForgeL1
+    PendingItems:
+      type: integer
+      description: Amount of items that will be returned in subsequent calls to the endpoint, as long as they are done with same filters. When the value is 0 it means that all items have been sent.
+      example: 15
+    Config:
+      type: object
+      description: Configuration parameters of the different smart contracts that power the Hermez Network.
+      properties:
+        hermez:
+          type: object
+          description: Constant configuration of the Hermez smart contract.
+          properties:
+            publicConstants:
+              type: object
+              description: Public Hermez smart contract constants
+              properties: 
+                tokenHEZ:
+                  allOf:
+                    - $ref: '#/components/schemas/EthereumAddress'
+                    - description: Ethereum address of the HEZ token.
+                    - example: "0x444dc4262BCDbf85190C01c996b4C06a461d2430"
+                absoluteMaxL1L2BatchTimeout:
+                  type: integer
+                  description:  L1L2 Batch Timeout
+                  example: 240
+                verifiers:
+                  type: array
+                  description: List of verifiers struct
+                  items:
+                    type: object
+                    properties:
+                      maxTx:
+                        type: integer
+                        description: Maximum rollup transactions in a batch
+                        example: 512
+                      nlevels:
+                        type: integer
+                        description: Number of levels of the circuit
+                        example: 32
+                    required:
+                      - maxTx
+                      - nlevels
+                    additionalProperties: false
+                hermezAuctionContract:
+                  allOf:
+                    - $ref: '#/components/schemas/EthereumAddress'
+                    - description: Ethereum address of the auction smart contract.
+                    - example: "0x111dc4262BCDbf85190C01c996b4C06a461d2430"
+                hermezGovernanceAddress:
+                  allOf:
+                    - $ref: '#/components/schemas/EthereumAddress'
+                    - description: Ethereum address of the governance.
+                    - example: "0x222dc4262BCDbf85190C01c996b4C06a461d2430"
+                withdrawDelayerContract:
+                  allOf:
+                    - $ref: '#/components/schemas/EthereumAddress'
+                    - description: Ethereum address of the withdraw delayer contracts.
+                    - example: "0x444dc4262BCDbf85190C01c996b4C06a461d2430"
+              required:
+                - tokenHEZ
+                - absoluteMaxL1L2BatchTimeout
+                - verifiers
+                - hermezAuctionContract
+                - hermezGovernanceAddress
+                - withdrawDelayerContract
+              additionalProperties: false
+            maxFeeIdxCoordinator:
+              type: integer
+              description: is the maximum number of tokens the coordinator can use to collect fees.
+              example: 64
+            reservedIdx:
+              type: integer
+              description: First 256 indexes reserved, first user index will be the 256.
+              example: 255
+            exitIdx:
+              type: integer
+              description: Account index used to indicate that a transaction is an `exit` or `force exit`.
+              example: 1
+            limitDepositAmount:
+              type: integer
+              description: Maximum deposit amount (L1 to L2) allowed.
+              example: 321
+            limitL2TransferAmount:
+              type: integer
+              description: Maximum amount (L2 to L2) allowed.
+              example: 837
+            limitTokens:
+              type: integer
+              description: Maximum number of different tokens that can be registered in the network.
+              example: 4294967295
+            l1CoordinatorTotalBytes:
+              type: integer
+              description: Number of bytes that a L1 coordinator transaction has ([4 bytes] token + [32 bytes] babyjub + [65 bytes] compressedSignature).
+              example: 101
+            l1UserTotalBytes:
+              type: integer
+              description: Number of bytes that a L1 user transaction has ([20 bytes] fromEthAddr + [32 bytes] fromBjj-compressed + [6 bytes] fromIdx + [5 bytes] depositAmountFloat40 + [5 bytes] amountFloat40 + [4 bytes] tokenId + [6 bytes] toIdx).
+              example: 72
+            maxL1UserTx:
+              type: integer
+              description: Maximum L1-user transactions allowed to be queued in a batch.
+              example: 128
+            maxL1Tx:
+              type: integer
+              description: Maximum L1 transactions allowed to be queued in a batch.
+              example: 256
+            inputSHAConstantBytes:
+              type: integer
+              description: Input SHA constant bytes 
+              example: 18542
+            numBuckets:
+              type: integer
+              description: Number of buckets
+              example: 5
+            maxWithdrawalDelay:
+              type: integer
+              description: Maximum delay to withdraw tokens. Time is measured in seconds.
+              example: 2 * 7 * 24 * 60 * 60
+            exchangeMultiplier:
+              type: integer
+              description: exchange multiplier
+              example: 1e14
+          required:
+            - publicConstants
+            - reservedIdx
+            - exitIdx
+            - limitDepositAmount
+            - limitL2TransferAmount
+            - limitTokens
+            - l1CoordinatorTotalBytes
+            - l1UserTotalBytes
+            - maxL1UserTx
+            - maxL1Tx
+            - inputSHAConstantBytes
+            - numBuckets
+            - maxWithdrawalDelay
+            - exchangeMultiplier
+          additionalProperties: false
+        auction:
+          type: object
+          description: Constant configuration of the auction smart contract.
+          properties:
+            blocksPerSlot:
+              type: integer
+              description: Blocks per slot.
+            initialMinimalBidding:
+              type: integer
+              description: Minimum bid when no one has bid yet.
+            genesisBlockNum:
+              allOf:
+                - $ref: '#/components/schemas/EthBlockNum'
+                - description: Ethereum block number in which the smart contract starts operating.
+            tokenHEZ:
+              allOf:
+                - $ref: '#/components/schemas/EthereumAddress'
+                - description: Ethereum address of the HEZ token.
+                - example: "0x333dc4262BCDbf85190C01c996b4C06a461d2430"
+            hermezRollup:
+              allOf:
+                - $ref: '#/components/schemas/EthereumAddress'
+                - description: Ethereum address of the rollup smart contract.
+                - example: "0x222dc4262BCDbf85190C01c996b4C06a461d2430"
+            governanceAddress:
+              allOf:
+                - $ref: '#/components/schemas/EthereumAddress'
+                - description: Ethereum address of the governance.
+                - example: "0x444dc4262BCDbf85190C01c996b4C06a461d2430"
+          required:
+            - blocksPerSlot
+            - initialMinimalBidding
+            - genesisBlockNum
+            - tokenHEZ
+            - hermezRollup
+            - governanceAddress
+          additionalProperties: false
+        withdrawalDelayer:
+          type: object
+          description: Constant configuration of the withdrawal delayer smart contract.
+          properties:
+            maxWithdrawalDelay:
+              type: integer
+              description: Maximum time delay in which the tokens can be locked in the contract. Time is measured in seconds.
+              example: 200
+            maxEmergencyModeTime:
+              type: integer
+              description: Maximum amount of time in which the contract can be in emergency mode. Time is measured in seconds.
+              example: 2000
+            hermezRollup:
+              allOf:
+                - $ref: '#/components/schemas/EthereumAddress'
+                - description: Ethereum address of the rollup smart contract.
+                - example: "0x222dc4262BCDbf85190C01c996b4C06a461d2430"
+          required:
+            - maxWithdrawalDelay
+            - maxEmergencyModeTime
+            - hermezRollup
+          additionalProperties: false
+        chainId:
+          type: integer
+          description: Id of the chain
+          example: 27
+      required:
+        - hermez
+        - auction
+        - withdrawalDelayer
+        - chainId
+      additionalProperties: false
+    Health:
+      type: object
+      description: Return values that can be valuable for the /health endpoint.
+      properties:
+        historyDB:
+          type: object
+          description: History db connection status
+          properties:
+            last_migration:
+              type: string
+              description: Name of the last migration
+              example: 0002.sql
+            status:
+              type: string
+              description: Status of the connection. Possible responses - UP or DOWN
+              example: UP
+            version:
+              type: string
+              description: Version of the database
+              example: PostgreSQL 13.2 (Debian 13.2-1.pgdg100+1) on x86_64-pc-linux-gnu
+          required:
+            - last_migration
+            - status
+            - version
+          additionalProperties: false
+        l2DB:
+          type: object
+          description: L2 db connection status
+          properties:
+            last_migration:
+              type: string
+              description: Name of the last migration
+              example: 0002.sql
+            status:
+              type: string
+              description: Status of the connection. Possible responses - UP or DOWN
+              example: UP
+            version:
+              type: string
+              description: Version of the database
+              example: PostgreSQL 13.2 (Debian 13.2-1.pgdg100+1) on x86_64-pc-linux-gnu
+          required:
+            - last_migration
+            - status
+            - version
+          additionalProperties: false
+        statedb:
+          type: object
+          description: state db connection status
+          properties:
+            status:
+              type: string
+              description: Status of the connection. Possible responses - UP or DOWN
+              example: UP
+            batchNum:
+              type: integer
+              description: current batch num in last checkpoint of the state db
+              example: 24025
+            root:
+              type: integer
+              description: root of the underlying Merkle Tree in the last checkpoint of the state db
+              example: 20723800499378797360494097450413598946834655273323161758167114779532027183222
+        status:
+          type: string
+          description: Status of the hermez node. Possible responses - UP or DOWN
+          example: UP
+        timestamp:
+          type: string
+          format: date-time
+          description: Current time with location set to UTC
+        version:
+          type: string
+          description: Current version of the hermez-node
+          example: v1.2.0
+        coordinatorForgerBalance:
+          type: string
+          description: Coordinator balance in ether. Returned with 18 decimals. Not returned if node not in coord mode
+          example: 48901270356066543960
+      required:
+        - historyDB
+        - l2DB
+        - status
+        - timestamp
+        - version
+      additionalProperties: false
+    Error:
+      type: object
+      description: Error response. 
+      properties:
+        message:
+          type: string
+        code:
+          type: integer
+          enum: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
+          description: >
+            Error codes:
+              * `1` - ErrParamValidationFailed error
+              * `2` - ErrDuplicatedKey error
+              * `3` - ErrSQLTimeout error
+              * `4` - ErrSQLNoRows error
+              * `5` - ErrExitAmount0 error
+              * `6` - ErrInvalidTxTypeOrTxID error
+              * `7` - ErrFeeOverflow error
+              * `8` - ErrGettingSenderAccount error
+              * `9` - ErrGettingSenderAccount error
+              * `10` - ErrInvalidNonce error
+              * `11` - ErrInvalidSignature error
+              * `12` - ErrGettingReceiverAccount error
+              * `13` - ErrCantSendToEthAddr error
+              * `14` - ErrNotAtomicTxsInPostPoolTx error
+              * `15` - ErrFailedToGetCurrentBlock error
+              * `16` - ErrFailedToGetAuctionVars error
+              * `17` - ErrFailedToAddEmptySlot error
+              * `18` - ErrTxsNotAtomic error
+              * `19` - ErrSingleTxInAtomicEndpoint error
+              * `20` - ErrRqOffsetOutOfBounds error
+              * `21` - ErrInvalidAtomicGroupID error
+              * `22` - ErrFailedToFindOffsetToRelativePositionCode error
+        type:
+          type: string
+          enum:
+            - ErrParamValidationFailed
+            - ErrDuplicatedKey
+            - ErrSQLTimeout
+            - ErrSQLNoRows
+            - ErrExitAmount0
+            - ErrInvalidTxTypeOrTxID
+            - ErrFeeOverflow
+            - ErrGettingSenderAccount
+            - ErrAccountTokenNotEqualTxToken
+            - ErrInvalidNonce
+            - ErrInvalidSignature
+            - ErrGettingReceiverAccount
+            - ErrCantSendToEthAddr
+            - ErrNotAtomicTxsInPostPoolTx
+            - ErrFailedToGetCurrentBlock
+            - ErrFailedToGetAuctionVars
+            - ErrFailedToAddEmptySlot
+            - ErrTxsNotAtomic
+            - ErrSingleTxInAtomicEndpoint
+            - ErrInvalidAtomicGroupID
+            - ErrFailedToFindOffsetToRelativePosition
+          description: >
+            Error types:
+              * `ErrParamValidationFailed` - this error appears when user sends wrong info in query|uri|form params
+              * `ErrDuplicatedKey` - record already exists in db
+              * `ErrSQLTimeout` - node is under heavy pressure and sql connection timeout happened
+              * `ErrSQLNoRows` - there is no such item in database
+              * `ErrExitAmount0` - receiving (and rejecting) a tx of type exit with amount 0 in /transactions-pool request
+              * `ErrInvalidTxTypeOrTxID` - tx with invalid type or txID was sent in /transactions-pool request
+              * `ErrFeeOverflow` - tx with fee amount that doesn't fit in 128 bits was sent in /transactions-pool request
+              * `ErrGettingSenderAccount` - sender account for tx was not found in /transactions-pool request
+              * `ErrAccountTokenNotEqualTxToken` - account token is not equal to tx token in /transactions-pool request
+              * `ErrInvalidNonce` - invalid nonce was sent in /transactions-pool request
+              * `ErrInvalidSignature` - invalid signature was sent in /transactions-pool or /account-creation-authorization requests
+              * `ErrGettingReceiverAccount` - receiver account for tx was not fount in /transactions-pool request
+              * `ErrCantSendToEthAddr` - it's not possible to send to Eth address when there is no account index associated to this Eth address and token, or the coordinator hasn't got an authorization to create an account
+              * `ErrNotAtomicTxsInPostPoolTx` - user sending atomic tx to /transactions-pool request
+              * `ErrFailedToGetCurrentBlock` - can't get current block in /slots request
+              * `ErrFailedToGetAuctionVars` - can't get auction vars in /slots request
+              * `ErrFailedToAddEmptySlot` - can't add empty slot in /slots request
+              * `ErrTxsNotAtomic` - there is at least one transaction in the payload that could be forged without the others
+              * `ErrSingleTxInAtomicEndpoint` - to use the atomic-pool endpoint at least two transactions are required
+              * `ErrRqOffsetOutOfBounds` - one of the transactions requested another one outside the bounds of the provided array
+              * `ErrInvalidAtomicGroupID` - invalid atomicGroupId
+              * `ErrFailedToFindOffsetToRelativePosition` - can't find offset to relative position
+    Error400:
+      allOf:
+        - $ref: '#/components/schemas/Error'
+        - example:
+            message: Invalid signature.
+            code: 4
+            type: ErrInvalidSignature
+    Error404:
+      allOf:
+        - $ref: '#/components/schemas/Error'
+        - example:
+            message: Item(s) not found.
+    Error500:
+      allOf:
+        - $ref: '#/components/schemas/Error'
+        - example:
+            message: Database error.
+    Error503:
+      allOf:
+        - $ref: '#/components/schemas/Error'
+        - example:
+            message: Service unavailable.
